@@ -1,0 +1,58 @@
+version: "3.9"
+
+services:
+  source-oracle-xe:
+    image: container-registry.oracle.com/database/express:latest
+    container_name: source-oracle-xe
+    ports:
+      - "1521:1521" # Oracle default port
+      - "5500:5500" # Oracle Enterprise Manager Express
+    environment:
+      - ORACLE_PDB=XE
+      - ORACLE_PASSWORD=Welcome1
+      - ORACLE_CHARACTERSET=AL32UTF8
+      - ORACLE_PWD=Welcome1
+    volumes:
+      - source-oracle-data:/opt/oracle/oradata
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "bash",
+          "-c",
+          "echo 'SELECT 1 FROM dual;' | sqlplus -s system/Welcome1@localhost/XE",
+        ]
+      interval: 10s
+      retries: 10
+      timeout: 5s
+
+  target-oracle-xe:
+    image: container-registry.oracle.com/database/express:latest
+    container_name: target-oracle-xe
+    ports:
+      - "1522:1521" # Oracle default port
+      - "5501:5500" # Oracle Enterprise Manager Express
+    environment:
+      - ORACLE_PDB=XE
+      - ORACLE_PASSWORD=Welcome1
+      - ORACLE_CHARACTERSET=AL32UTF8
+      - ORACLE_PWD=Welcome1
+    volumes:
+      - target-oracle-data:/opt/oracle/oradata
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "bash",
+          "-c",
+          "echo 'SELECT 1 FROM dual;' | sqlplus -s system/Welcome1@localhost/XE",
+        ]
+      interval: 10s
+      retries: 10
+      timeout: 5s
+
+volumes:
+  source-oracle-data:
+    driver: local
+  target-oracle-data:
+    driver: local

@@ -1,0 +1,9 @@
+/target
+.uncommitted
+leaf.db
+.vscode
+.idea
+logs
+leaf.db-shm
+leaf.db-wal
+.env

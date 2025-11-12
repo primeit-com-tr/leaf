@@ -1,0 +1,72 @@
+select
+    schema_name,
+    object_type,
+    object_name,
+    last_ddl_time,
+    case when object_type = 'TABLE' THEN 10
+        when object_type = 'CONSTRAINT' THEN 12
+        when object_type = 'REF_CONSTRAINT' THEN 13
+        when object_type = 'INDEX' THEN 20
+        when object_type = 'SEQUENCE' THEN 30
+        when object_type = 'TYPE' THEN 40
+    else 100 end rank_id
+from (
+select
+    distinct
+    owner schema_name,
+    decode(object_type,
+        'PACKAGE BODY','PACKAGE',
+        'TYPE BODY','TYPE',
+        object_type
+    ) object_type,
+    object_name,
+    max(last_ddl_time) last_ddl_time
+from dba_objects
+where
+-- Exclude generated objects, dbms_metadata.get_ddl() can't be used for generated objects
+nvl(generated, 'N') != 'Y' and
+owner in ({{ schemas }})
+{% if cutoff_date %}
+and (
+    TO_DATE(timestamp,'YYYY-MM-dd:HH24:MI:SS') >= TO_DATE('{{ cutoff_date }}','YYYY.MM.DD:HH24.MI.SS') or
+    to_date(last_ddl_time,'YYYY-MM-dd:HH24:MI:SS') >= TO_DATE('{{ cutoff_date }}','YYYY.MM.DD:HH24.MI.SS')
+)
+{% endif %}
+and object_name not like 'SYS\_%' ESCAPE '\'
+{% if exclude_object_types %}
+and object_type not in ({{ exclude_object_types }})
+{% endif %}
+{% if exclude_object_names %}
+and object_name not in ({{ exclude_object_names }})
+{% endif %}
+group by
+    owner,
+    decode(object_type,
+        'PACKAGE BODY','PACKAGE',
+        'TYPE BODY','TYPE',
+        object_type
+    ),
+    object_name
+union all
+select
+    owner schema_name,
+    decode(constraint_type,'R','REF_CONSTRAINT','CONSTRAINT') object_type,
+    constraint_name object_name,
+    last_change last_ddl_time
+from dba_constraints
+where constraint_name not like 'SYS\_C%' ESCAPE '\'
+ {% if cutoff_date %}
+ and last_change >= TO_DATE('{{ cutoff_date }}','YYYY.MM.DD:HH24.MI.SS')
+ {% endif %}
+ and owner in ({{ schemas }})
+ and table_name in (select OBJECT_NAME from dba_objects
+                      where
+                        nvl(generated, 'N') != 'Y' and
+                        owner in ({{ schemas }})
+                        {% if cutoff_date %}
+                        and TO_DATE(timestamp,'YYYY.MM.DD:HH24.MI.SS') >= TO_DATE('{{ cutoff_date }}','YYYY.MM.DD:HH24.MI.SS')
+                        {% endif %}
+                        and object_type ='TABLE'
+                    )
+)
+order by 5
