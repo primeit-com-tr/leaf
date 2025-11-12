@@ -404,7 +404,7 @@ pub async fn run(
     spinner.set_style(
         ProgressStyle::default_spinner()
             .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
-            .template("{spinner:.cyan} {msg}")
+            .template("{spinner:.cyan} [{elapsed_precise}] {msg}")
             .unwrap(),
     );
     spinner.enable_steady_tick(std::time::Duration::from_millis(80));
@@ -514,7 +514,7 @@ async fn rollback(plan_name: &str, ctx: &Context<'_>) {
     spinner.set_style(
         ProgressStyle::default_spinner()
             .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
-            .template("{spinner:.cyan} {msg}")
+            .template("{spinner:.cyan} [{elapsed_precise}] {msg}")
             .unwrap(),
     );
     spinner.enable_steady_tick(std::time::Duration::from_millis(80));

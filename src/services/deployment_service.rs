@@ -341,10 +341,6 @@ impl DeploymentService {
                     "Executing change for '{} {}.{}'",
                     object_type, object_owner, object_name
                 ));
-                println!(
-                    "Executing change for '{} {}.{}' {}",
-                    object_type, object_owner, object_name, script
-                );
                 let result = match client.execute(&script).await {
                     Ok(_) => {
                         change_active.end(None);
