@@ -38,10 +38,10 @@ Simple and powerful database deployment tool for `Oracle` Database.
 # Download the latest release for your operating system
 
 # Linux
-curl -L https://github.com/ceyhunkerti/leaf/releases/latest/download/leaf-linux-x86_64 -o leaf
+curl -L https://github.com/primeit-com-tr/leaf/releases/latest/download/leaf-linux-x86_64 -o leaf
 
 # macOS
-curl -L https://github.com/ceyhunkerti/leaf/releases/latest/download/leaf-macos-x86_64 -o leaf
+curl -L https://github.com/primeit-com-tr/leaf/releases/latest/download/leaf-macos-x86_64 -o leaf
 
 # Make the binary executable
 chmod +x leaf
@@ -53,7 +53,7 @@ sudo mv leaf /usr/local/bin/
 ### Windows Users
 
 ```bash
-Invoke-WebRequest -Uri "https://github.com/ceyhunkerti/leaf/releases/latest/download/leaf-windows-x86_64.exe" -OutFile "$env:USERPROFILE\leaf.exe"
+Invoke-WebRequest -Uri "https://github.com/primeit-com-tr/leaf/releases/latest/download/leaf-windows-x86_64.exe" -OutFile "$env:USERPROFILE\leaf.exe"
 ```
 Optionally, move the binary to a directory in your PATH.
 ```bash
@@ -67,7 +67,7 @@ setx PATH "$env:PATH;$env:USERPROFILE"
 - Build the binary
 
 ```bash
-git clone https://github.com/ceyhunkerti/leaf.git
+git clone https://github.com/primeit-com-tr/leaf.git
 cd leaf
 cargo build --release
 ```
@@ -428,7 +428,7 @@ Use the `leaf deployments show --help` command to see the available options for 
 - Build the binary
 
 ```bash
-git clone https://github.com/ceyhunkerti/leaf.git
+git clone https://github.com/primeit-com-tr/leaf.git
 cd leaf
 cargo build --release
 ```
