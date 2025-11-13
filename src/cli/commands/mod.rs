@@ -48,7 +48,7 @@ pub enum Commands {
     /// Initialize application
     Init {
         #[command(subcommand)]
-        action: InitCommands,
+        action: Option<InitCommands>,
     },
 
     /// Print version

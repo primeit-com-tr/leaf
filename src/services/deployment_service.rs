@@ -19,7 +19,10 @@ use crate::{
 use anyhow::{Context, Result, anyhow};
 use chrono::{NaiveDateTime, Utc};
 use sea_orm::IntoActiveModel;
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 use tokio::try_join;
 use tracing::{debug, warn};
 /// Service layer for Deployment business logic
@@ -561,7 +564,7 @@ impl DeploymentService {
         &self,
         deployment_id: i32,
         progress: &ProgressReporter,
-    ) -> Result<Option<HashMap<ChangesetModel, Vec<(ChangeModel, RollbackModel)>>>> {
+    ) -> Result<Option<BTreeMap<ChangesetModel, Vec<(ChangeModel, RollbackModel)>>>> {
         let plan = self.plan_repo.get_by_id(deployment_id).await?;
         progress.report(format!(
             "Preparing rollback for deployment {} for plan '{}' ...",
@@ -575,12 +578,12 @@ impl DeploymentService {
             progress.report(format!("No changes found for deployment {}", deployment_id));
             return Ok(None);
         }
-        let mut rollbacks: HashMap<ChangesetModel, Vec<(ChangeModel, RollbackModel)>> =
-            HashMap::new();
+        let mut rollbacks: BTreeMap<ChangesetModel, Vec<(ChangeModel, RollbackModel)>> =
+            BTreeMap::new();
 
         // first create rollbacks
         progress.report(format!("Creating rollback actions..."));
-        for (changeset, changes) in changesets_with_changes.unwrap() {
+        for (changeset, changes) in changesets_with_changes.unwrap().into_iter().rev() {
             let changeset_group = rollbacks.entry(changeset.clone()).or_default();
 
             for change in changes {
@@ -600,11 +603,10 @@ impl DeploymentService {
 
         Ok(Some(rollbacks))
     }
-
     async fn execute_rollbacks(
         &self,
         deployment_id: i32,
-        rollbacks: HashMap<ChangesetModel, Vec<(ChangeModel, RollbackModel)>>,
+        rollbacks: BTreeMap<ChangesetModel, Vec<(ChangeModel, RollbackModel)>>,
         progress: &ProgressReporter,
     ) -> Result<()> {
         let deployment = self.repo.get_by_id(deployment_id).await?;
@@ -631,6 +633,14 @@ impl DeploymentService {
                         changeset.object_owner,
                         changeset.object_name
                     ));
+                    println!(
+                        "Executing rollback {} of {} for '{} {}.{}'",
+                        i + 1,
+                        change_rollback_vec.len(),
+                        changeset.object_type,
+                        changeset.object_owner,
+                        changeset.object_name
+                    );
 
                     self.rollback_repo
                         .set_status(rollback.id, RollbackStatus::Running)

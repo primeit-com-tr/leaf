@@ -54,6 +54,18 @@ impl Hash for Model {
     }
 }
 
+impl Ord for Model {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.id.cmp(&other.id)
+    }
+}
+
+impl PartialOrd for Model {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl ActiveModel {
     /// Add an error to the errors list
     pub fn add_error(&mut self, error: String) {

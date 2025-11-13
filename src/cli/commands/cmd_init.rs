@@ -31,8 +31,8 @@ pub enum InitCommands {
     Db,
 }
 
-pub async fn execute(action: &InitCommands, ctx: &Context<'_>) {
-    match action {
+pub async fn execute(action: Option<&InitCommands>, ctx: &Context<'_>) {
+    match action.unwrap_or(&InitCommands::All { overwrite: false }) {
         InitCommands::All { overwrite } => {
             init_env_file(*overwrite).await;
             init_database(ctx).await;

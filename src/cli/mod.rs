@@ -44,7 +44,7 @@ impl Cli {
             Some(Commands::Deploy(args)) => {
                 cmd_plans::execute(&cmd_plans::PlanCommands::Run(args.clone()), ctx).await
             }
-            Some(Commands::Init { action }) => cmd_init::execute(action, ctx).await,
+            Some(Commands::Init { action }) => cmd_init::execute(action.as_ref(), ctx).await,
             Some(Commands::Version(action)) => cmd_version::execute(action, ctx.settings).await,
             None => {
                 // No command means start server - handled in main
