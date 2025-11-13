@@ -1,7 +1,10 @@
 use anyhow::Result;
 use leaf::{
-    config::Settings, entities::DeploymentModel, oracle::OracleClient, services::AppServices,
-    types::DeploymentResultType, utils::ProgressReporter,
+    config::Settings,
+    entities::DeploymentModel,
+    oracle::OracleClient,
+    services::AppServices,
+    utils::{DeploymentSink, ProgressReporter},
 };
 use serial_test::serial;
 use tempfile::NamedTempFile;
@@ -156,16 +159,12 @@ async fn test_run_deployment_single_schema() -> Result<()> {
 
     let deployment = services
         .deployment_service
-        .run(
-            plan,
-            cutoff_date,
-            Some(is_dry_run),
-            ProgressReporter::new(None),
-        )
+        .prepare_and_run(plan.id, false, cutoff_date, &mut DeploymentSink::new(None)?)
         .await?;
 
     match deployment {
-        DeploymentResultType::Deployment(deployment) => {
+        Some(deployment_id) => {
+            let deployment = services.deployment_service.get_by_id(deployment_id).await?;
             check_schema1_emp_deployed(&deployment, &services).await?;
             check_schema1_dept(&deployment, &services).await?;
         }
@@ -201,20 +200,15 @@ async fn test_run_deployment() -> Result<()> {
         .await?;
 
     let cutoff_date = chrono::Utc::now().naive_utc() - chrono::Duration::days(1);
-    let is_dry_run = false;
 
     let deployment = services
         .deployment_service
-        .run(
-            plan,
-            cutoff_date,
-            Some(is_dry_run),
-            ProgressReporter::new(None),
-        )
+        .prepare_and_run(plan.id, false, cutoff_date, &mut DeploymentSink::new(None)?)
         .await?;
 
     match deployment {
-        DeploymentResultType::Deployment(deployment) => {
+        Some(deployment_id) => {
+            let deployment = services.deployment_service.get_by_id(deployment_id).await?;
             check_schema1_emp_deployed(&deployment, &services).await?;
             check_schema1_dept(&deployment, &services).await?;
             check_schema2_bonus_not_exists(&deployment, &services).await?;
@@ -251,20 +245,15 @@ async fn test_run_deployment_exclude_object_types() -> Result<()> {
         .await?;
 
     let cutoff_date = chrono::Utc::now().naive_utc() - chrono::Duration::days(1);
-    let is_dry_run = false;
 
     let deployment = services
         .deployment_service
-        .run(
-            plan,
-            cutoff_date,
-            Some(is_dry_run),
-            ProgressReporter::new(None),
-        )
+        .prepare_and_run(plan.id, false, cutoff_date, &mut DeploymentSink::new(None)?)
         .await?;
 
     match deployment {
-        DeploymentResultType::Deployment(deployment) => {
+        Some(deployment_id) => {
+            let deployment = services.deployment_service.get_by_id(deployment_id).await?;
             // Table type is excluded, so we expect target schema2 has table named BONUS
             check_schema2_bonus_exists(&deployment, &services).await?;
         }
@@ -304,16 +293,12 @@ async fn test_run_deployment_exclude_object_names() -> Result<()> {
 
     let deployment = services
         .deployment_service
-        .run(
-            plan,
-            cutoff_date,
-            Some(is_dry_run),
-            ProgressReporter::new(None),
-        )
+        .prepare_and_run(plan.id, false, cutoff_date, &mut DeploymentSink::new(None)?)
         .await?;
 
     match deployment {
-        DeploymentResultType::Deployment(deployment) => {
+        Some(deployment_id) => {
+            let deployment = services.deployment_service.get_by_id(deployment_id).await?;
             // Object name BONUS is excluded, so we expect target schema2 has table named BONUS
             check_schema2_bonus_exists(&deployment, &services).await?;
         }
@@ -349,20 +334,15 @@ async fn test_run_deployment_disabled_drop_types() -> Result<()> {
         .await?;
 
     let cutoff_date = chrono::Utc::now().naive_utc() - chrono::Duration::days(1);
-    let is_dry_run = false;
 
     let deployment = services
         .deployment_service
-        .run(
-            plan,
-            cutoff_date,
-            Some(is_dry_run),
-            ProgressReporter::new(None),
-        )
+        .prepare_and_run(plan.id, false, cutoff_date, &mut DeploymentSink::new(None)?)
         .await?;
 
     match deployment {
-        DeploymentResultType::Deployment(deployment) => {
+        Some(deployment_id) => {
+            let deployment = services.deployment_service.get_by_id(deployment_id).await?;
             // drop TABLE is disabled, so we expect target schema2 has table named BONUS
             check_schema2_bonus_exists(&deployment, &services).await?;
             check_schema1_emp_columns_not_dropped(&deployment, &services).await?;
@@ -400,20 +380,15 @@ async fn test_rollback_deployment() -> Result<()> {
 
     let plan_id = plan.id.clone();
     let cutoff_date = chrono::Utc::now().naive_utc() - chrono::Duration::days(1);
-    let is_dry_run = false;
 
     let result = services
         .deployment_service
-        .run(
-            plan,
-            cutoff_date,
-            Some(is_dry_run),
-            ProgressReporter::new(None),
-        )
+        .prepare_and_run(plan_id, false, cutoff_date, &mut DeploymentSink::new(None)?)
         .await?;
 
     match result {
-        DeploymentResultType::Deployment(deployment) => {
+        Some(deployment_id) => {
+            let deployment = services.deployment_service.get_by_id(deployment_id).await?;
             check_schema1_emp_deployed(&deployment, &services).await?;
         }
         _ => panic!("Deployment result type is not Deployment"),

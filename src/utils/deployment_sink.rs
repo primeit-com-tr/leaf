@@ -19,6 +19,22 @@ pub struct DeploymentSinkOptions {
     pub progress_tx: Option<mpsc::UnboundedSender<String>>,
 }
 
+impl DeploymentSinkOptions {
+    pub fn new(
+        dry: bool,
+        output_path: Option<PathBuf>,
+        script_sep: Option<String>,
+        progress_tx: Option<mpsc::UnboundedSender<String>>,
+    ) -> Self {
+        Self {
+            dry,
+            output_path,
+            script_sep,
+            progress_tx,
+        }
+    }
+}
+
 impl Default for DeploymentSinkOptions {
     fn default() -> Self {
         Self {
