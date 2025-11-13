@@ -39,7 +39,7 @@ pub enum Relation {
     Change,
 }
 
-impl Related<super::connection::Entity> for Entity {
+impl Related<super::change::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Change.def()
     }

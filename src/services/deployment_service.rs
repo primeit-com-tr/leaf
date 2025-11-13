@@ -2,13 +2,14 @@ use crate::{
     delta::{delta::with_disabled_drop_types_excluded, find_deltas},
     entities::{
         ChangeActiveModel, ChangeModel, ChangesetActiveModel, ChangesetModel,
-        DeploymentActiveModel, DeploymentModel, PlanModel, RollbackModel,
+        DeploymentActiveModel, DeploymentModel, PlanModel, RollbackModel, rollback,
     },
     errors::{DeployError, SchemaValidationError},
     oracle::OracleClient,
     repo::{
         ChangeRepository, ChangesetRepository, ConnectionRepository, DeploymentRepository,
-        PlanRepository, rollback_repo::RollbackRepository,
+        PlanRepository,
+        rollback_repo::{self, RollbackRepository},
     },
     types::{
         ChangeStatus, Delta, DeploymentItem, DeploymentResultDetails, DeploymentResultType,
@@ -564,7 +565,7 @@ impl DeploymentService {
         &self,
         deployment_id: i32,
         progress: &ProgressReporter,
-    ) -> Result<Option<BTreeMap<ChangesetModel, Vec<(ChangeModel, RollbackModel)>>>> {
+    ) -> Result<Option<u64>> {
         let plan = self.plan_repo.get_by_id(deployment_id).await?;
         progress.report(format!(
             "Preparing rollback for deployment {} for plan '{}' ...",
@@ -578,39 +579,46 @@ impl DeploymentService {
             progress.report(format!("No changes found for deployment {}", deployment_id));
             return Ok(None);
         }
-        let mut rollbacks: BTreeMap<ChangesetModel, Vec<(ChangeModel, RollbackModel)>> =
-            BTreeMap::new();
-
         // first create rollbacks
         progress.report(format!("Creating rollback actions..."));
-        for (changeset, changes) in changesets_with_changes.unwrap().into_iter().rev() {
-            let changeset_group = rollbacks.entry(changeset.clone()).or_default();
 
-            for change in changes {
+        let mut change_count = 0;
+        for (changeset, changes) in changesets_with_changes.unwrap().into_iter().rev() {
+            for change in &changes {
+                // Add & here to borrow instead of move
                 progress.report(format!(
                     "Creating rollback for '{} {}.{}'",
                     changeset.object_type, changeset.object_owner, changeset.object_name
                 ));
 
-                let rollback = self
-                    .rollback_repo
+                self.rollback_repo
                     .create(change.id, change.rollback_script.clone())
                     .await?;
-
-                changeset_group.push((change.clone(), rollback));
             }
+            change_count += changes.len() as u64;
         }
 
-        Ok(Some(rollbacks))
+        Ok(Some(change_count))
     }
     async fn execute_rollbacks(
         &self,
         deployment_id: i32,
-        rollbacks: BTreeMap<ChangesetModel, Vec<(ChangeModel, RollbackModel)>>,
         progress: &ProgressReporter,
     ) -> Result<()> {
         let deployment = self.repo.get_by_id(deployment_id).await?;
         let plan = self.plan_repo.get_by_id(deployment.plan_id).await?;
+
+        let rollbacks = self
+            .rollback_repo
+            .get_rollbacks_with_changes_and_changesets(deployment_id)
+            .await?;
+
+        if rollbacks.is_none() {
+            progress.report("No changes to rollback".to_string());
+            return Ok(());
+        }
+
+        let rollbacks = rollbacks.unwrap();
 
         self.plan_repo
             .set_status(plan.id, PlanStatus::RollingBack)
@@ -623,56 +631,46 @@ impl DeploymentService {
         let result: Result<()> = async {
             let client = self.get_client(plan.target_connection_id).await?;
 
-            for (changeset, change_rollback_vec) in &rollbacks {
-                for (i, (change, rollback)) in change_rollback_vec.iter().enumerate() {
-                    progress.report(format!(
-                        "Executing rollback {} of {} for '{} {}.{}'",
-                        i + 1,
-                        change_rollback_vec.len(),
-                        changeset.object_type,
-                        changeset.object_owner,
-                        changeset.object_name
-                    ));
-                    println!(
-                        "Executing rollback {} of {} for '{} {}.{}'",
-                        i + 1,
-                        change_rollback_vec.len(),
-                        changeset.object_type,
-                        changeset.object_owner,
-                        changeset.object_name
-                    );
+            for (i, (rollback, change, changeset)) in rollbacks.iter().enumerate() {
+                progress.report(format!(
+                    "Executing rollback {} of {} for '{} {}.{}'",
+                    i + 1,
+                    rollbacks.len(),
+                    changeset.object_type,
+                    changeset.object_owner,
+                    changeset.object_name
+                ));
 
-                    self.rollback_repo
-                        .set_status(rollback.id, RollbackStatus::Running)
-                        .await?;
+                self.rollback_repo
+                    .set_status(rollback.id, RollbackStatus::Running)
+                    .await?;
 
-                    match client.execute(&rollback.script).await {
-                        Ok(_) => {
-                            self.change_repo
-                                .set_status(change.id, ChangeStatus::RolledBack)
-                                .await?;
-                            self.rollback_repo
-                                .set_status(rollback.id, RollbackStatus::Success)
-                                .await?;
-                        }
-                        Err(e) => {
-                            self.change_repo
-                                .set_status(change.id, ChangeStatus::RollbackError)
-                                .await?;
-                            self.rollback_repo
-                                .set_error(rollback.id, e.to_string())
-                                .await?;
+                match client.execute(&rollback.script).await {
+                    Ok(_) => {
+                        self.change_repo
+                            .set_status(change.id, ChangeStatus::RolledBack)
+                            .await?;
+                        self.rollback_repo
+                            .set_status(rollback.id, RollbackStatus::Success)
+                            .await?;
+                    }
+                    Err(e) => {
+                        self.change_repo
+                            .set_status(change.id, ChangeStatus::RollbackError)
+                            .await?;
+                        self.rollback_repo
+                            .set_error(rollback.id, e.to_string())
+                            .await?;
 
-                            // Set final statuses before returning error
-                            self.repo
-                                .set_status(deployment_id, DeploymentStatus::RollbackError)
-                                .await?;
-                            self.plan_repo
-                                .set_status(plan.id, PlanStatus::RollbackError)
-                                .await?;
+                        // Set final statuses before returning error
+                        self.repo
+                            .set_status(deployment_id, DeploymentStatus::RollbackError)
+                            .await?;
+                        self.plan_repo
+                            .set_status(plan.id, PlanStatus::RollbackError)
+                            .await?;
 
-                            return Err(e);
-                        }
+                        return Err(e);
                     }
                 }
             }
@@ -707,11 +705,11 @@ impl DeploymentService {
         progress: ProgressReporter,
     ) -> Result<()> {
         match self.prepare_rollback(deployment_id, &progress).await? {
-            Some(rollbacks) => {
-                self.execute_rollbacks(deployment_id, rollbacks, &progress)
-                    .await
+            Some(change_count) if change_count > 0 => {
+                self.execute_rollbacks(deployment_id, &progress).await?;
+                Ok(())
             }
-            None => {
+            Some(_) | None => {
                 progress.report("No changes to rollback".to_string());
                 Ok(())
             }

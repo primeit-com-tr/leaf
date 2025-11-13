@@ -1,5 +1,9 @@
 use crate::{
-    entities::{DeploymentActiveModel, DeploymentColumn, DeploymentModel, DeploymentsEntity},
+    entities::{
+        ChangeColumn, ChangeModel, ChangesEntity, ChangesetColumn, ChangesetModel,
+        ChangesetsEntity, DeploymentActiveModel, DeploymentColumn, DeploymentModel,
+        DeploymentsEntity, RollbackModel,
+    },
     types::DeploymentStatus,
 };
 use anyhow::{Context, Result};

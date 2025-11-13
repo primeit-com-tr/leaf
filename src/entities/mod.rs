@@ -7,11 +7,11 @@ pub mod rollback;
 
 pub use change::{
     ActiveModel as ChangeActiveModel, Column as ChangeColumn, Entity as ChangesEntity,
-    Model as ChangeModel,
+    Model as ChangeModel, Relation as ChangeRelation,
 };
 pub use changeset::{
     ActiveModel as ChangesetActiveModel, Column as ChangesetColumn, Entity as ChangesetsEntity,
-    Model as ChangesetModel,
+    Model as ChangesetModel, Relation as ChangesetRelation,
 };
 pub use connection::{
     ActiveModel as ConnectionActiveModel, Column as ConnectionColumn, Entity as ConnectionsEntity,
@@ -27,5 +27,5 @@ pub use plan::{
 
 pub use rollback::{
     ActiveModel as RollbackActiveModel, Column as RollbackColumn, Entity as RollbacksEntity,
-    Model as RollbackModel,
+    Model as RollbackModel, Relation as RollbackRelation,
 };
