@@ -210,12 +210,46 @@ impl DeploymentService {
         cutoff_date: NaiveDateTime,
         sink: &mut DeploymentSink,
     ) -> Result<Option<i32>> {
-        match self.prepare_deployment(plan_id, cutoff_date, sink).await? {
-            Some(deployment_id) => {
-                self.run_deployment(deployment_id, fail_fast, sink).await?;
-                Ok(Some(deployment_id))
+        match self.prepare_deployment(plan_id, cutoff_date, sink).await {
+            Ok(result) => match result {
+                Some(deployment_id) => {
+                    match self.run_deployment(deployment_id, fail_fast, sink).await {
+                        Ok(_) => {
+                            // Success - update both statuses
+                            self.repo
+                                .set_status(deployment_id, DeploymentStatus::Success)
+                                .await?;
+                            self.plan_repo
+                                .set_status(plan_id, PlanStatus::Success)
+                                .await?;
+                            sink.progress("✅ Deployment completed successfully");
+                            Ok(Some(deployment_id))
+                        }
+                        Err(e) => {
+                            let (count, errors) = e
+                                .downcast_ref::<DeployError>()
+                                .map(|DeployError::Errors(count, errors)| (*count, errors.clone()))
+                                .unwrap_or_else(|| (1, vec![e.to_string()]));
+
+                            sink.progress(format!("❌ Deployment failed with {} error(s)", count));
+                            self.plan_repo
+                                .set_status(plan_id, PlanStatus::Error)
+                                .await?;
+                            self.repo.set_error(deployment_id, &errors).await?;
+                            Err(e)
+                        }
+                    }
+                }
+                None => Ok(None),
+            },
+            Err(e) => {
+                // Failure during preparation
+                self.plan_repo
+                    .set_status(plan_id, PlanStatus::Error)
+                    .await?;
+                sink.progress(format!("❌ Failed to prepare deployment: {}", e));
+                Err(e)
             }
-            None => Ok(None),
         }
     }
 
@@ -286,11 +320,11 @@ impl DeploymentService {
                 warn!("No changes found for plan {}", plan.name);
                 return Ok(None);
             }
-
+            let deployment_id: Option<i32> = deployment_model.as_ref().map(|d| d.id);
             self.create_changesets(deployment_model, &deltas, sink)
                 .await?;
 
-            Ok(None)
+            Ok(deployment_id)
         }
         .await;
 
@@ -300,7 +334,7 @@ impl DeploymentService {
             PlanStatus::Error
         };
 
-        let _ = self.plan_repo.set_status(plan_id, final_status).await;
+        self.plan_repo.set_status(plan_id, final_status).await?;
 
         result
     }

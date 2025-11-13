@@ -4,7 +4,8 @@ use crate::{
         ChangesetsEntity, DeploymentActiveModel, DeploymentColumn, DeploymentModel,
         DeploymentsEntity, RollbackModel,
     },
-    types::DeploymentStatus,
+    errors,
+    types::{DeploymentStatus, StringList},
 };
 use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
@@ -150,6 +151,26 @@ impl DeploymentRepository {
     ) -> Result<DeploymentModel> {
         let model = deployment.save(&self.db).await?;
         Ok(model.try_into()?)
+    }
+
+    pub async fn set_error(&self, id: i32, errors: &Vec<String>) -> Result<DeploymentModel> {
+        let deployment = self
+            .get_by_id(id)
+            .await
+            .context(format!("Deployment with ID {} not found", id))?;
+
+        let mut active: DeploymentActiveModel = deployment.into();
+        active.set_status(DeploymentStatus::Error);
+        active.errors = Set(Some(StringList(errors.to_vec())));
+
+        active
+            .update(&self.db)
+            .await
+            .context(format!("Failed to update status for deployment {}", id))?;
+
+        self.get_by_id(id)
+            .await
+            .context("Deployment was updated but could not be retrieved")
     }
 
     pub async fn set_status(&self, id: i32, status: DeploymentStatus) -> Result<DeploymentModel> {
