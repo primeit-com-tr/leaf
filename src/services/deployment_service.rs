@@ -583,6 +583,7 @@ impl DeploymentService {
         progress.report(format!("Creating rollback actions..."));
 
         let mut change_count = 0;
+        // rollbacks are saved in reverse change order to keep dependencies.
         for (changeset, changes) in changesets_with_changes.unwrap().into_iter().rev() {
             for change in &changes {
                 // Add & here to borrow instead of move
