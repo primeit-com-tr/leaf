@@ -2,8 +2,12 @@ use clap::{Parser, Subcommand};
 use colored::Colorize;
 use tabled::{
     Table, Tabled,
-    settings::{Alignment, Modify, Style, object::Rows},
+    settings::{
+        Alignment, Modify, Style, Width,
+        object::{Columns, Rows},
+    },
 };
+use terminal_size::{Width as TermWidth, terminal_size};
 
 use crate::{
     cli::{Context, commands::ExitOnErr},
@@ -411,9 +415,17 @@ async fn show_deployment_changes(deployment_id: i32, ctx: &Context<'_>) {
         }
     }
 
+    let terminal_width = if let Some((TermWidth(w), _)) = terminal_size() {
+        w as usize
+    } else {
+        80
+    };
+
     let table = Table::new(table_data)
         .with(Style::rounded())
         .with(Modify::new(Rows::new(1..)).with(Alignment::left()))
+        .with(Modify::new(Columns::one(4)).with(Width::truncate(50).suffix("...")))
+        .with(Width::increase(terminal_width))
         .to_string();
     println!("{}", table);
 }
