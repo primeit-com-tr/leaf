@@ -2,14 +2,13 @@ use crate::{
     delta::{delta::with_disabled_drop_types_excluded, find_deltas},
     entities::{
         ChangeActiveModel, ChangeModel, ChangesetActiveModel, ChangesetModel,
-        DeploymentActiveModel, DeploymentModel, PlanModel, RollbackModel, rollback,
+        DeploymentActiveModel, DeploymentModel, PlanModel,
     },
     errors::{DeployError, SchemaValidationError},
     oracle::OracleClient,
     repo::{
         ChangeRepository, ChangesetRepository, ConnectionRepository, DeploymentRepository,
-        PlanRepository,
-        rollback_repo::{self, RollbackRepository},
+        PlanRepository, rollback_repo::RollbackRepository,
     },
     types::{
         ChangeStatus, Delta, DeploymentItem, DeploymentResultDetails, DeploymentResultType,
@@ -20,13 +19,10 @@ use crate::{
 use anyhow::{Context, Result, anyhow};
 use chrono::{NaiveDateTime, Utc};
 use sea_orm::IntoActiveModel;
-use std::{
-    collections::{BTreeMap, HashMap},
-    sync::Arc,
-};
+use std::sync::Arc;
 use tokio::try_join;
 use tracing::{debug, warn};
-/// Service layer for Deployment business logic
+
 pub struct DeploymentService {
     repo: Arc<DeploymentRepository>,
     plan_repo: Arc<PlanRepository>,
@@ -601,6 +597,7 @@ impl DeploymentService {
 
         Ok(Some(change_count))
     }
+
     async fn execute_rollbacks(
         &self,
         deployment_id: i32,
