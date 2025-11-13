@@ -64,6 +64,7 @@ impl AppServices {
             plan_service: PlanService::new(
                 settings.clone(),
                 plan_repo.clone(),
+                deployment_repo.clone(),
                 connection_repo.clone(),
             ),
             connection_service: ConnectionService::new(connection_repo.clone()),

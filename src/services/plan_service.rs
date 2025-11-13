@@ -3,15 +3,17 @@ use std::sync::Arc;
 use crate::{
     config::Settings,
     entities::plan::Model as PlanModel,
-    repo::{ConnectionRepository, plan_repo::PlanRepository},
+    repo::{ConnectionRepository, DeploymentRepository, plan_repo::PlanRepository},
     types::{PlanStatus, StringList},
 };
 use anyhow::{Context, Result, anyhow, ensure};
+use chrono::NaiveDateTime;
 
 /// Service layer for Plan business logic
 pub struct PlanService {
     settings: Settings,
     repo: Arc<PlanRepository>,
+    deployment_repo: Arc<DeploymentRepository>,
     connection_repo: Arc<ConnectionRepository>,
 }
 
@@ -19,11 +21,13 @@ impl PlanService {
     pub fn new(
         settings: Settings,
         repo: Arc<PlanRepository>,
+        deployment_repo: Arc<DeploymentRepository>,
         connection_repo: Arc<ConnectionRepository>,
     ) -> Self {
         Self {
             settings,
             repo,
+            deployment_repo,
             connection_repo,
         }
     }
@@ -162,5 +166,13 @@ impl PlanService {
             .context(format!("Failed to reset status for plan '{}'", plan.name))?;
 
         Ok(plan)
+    }
+
+    pub async fn get_last_cutoff_date(&self, plan_id: i32) -> Result<Option<NaiveDateTime>> {
+        let deployment = self
+            .deployment_repo
+            .find_last_successful_by_plan_id(plan_id)
+            .await?;
+        Ok(deployment.map(|d| d.cutoff_date))
     }
 }

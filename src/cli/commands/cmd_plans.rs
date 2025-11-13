@@ -9,8 +9,12 @@ use tracing::error;
 
 use crate::{
     cli::{Context, commands::ExitOnErr},
+    entities::PlanModel,
     types::PlanStatus,
-    utils::{ProgressReporter, parsers::parse_cutoff_date},
+    utils::{
+        DeploymentSink, ProgressReporter, deployment_sink::DeploymentSinkOptions,
+        parsers::parse_cutoff_date, script_writer::ScriptTarget,
+    },
 };
 use tabled::{settings::Alignment, settings::Modify, settings::Style, settings::object::Rows};
 
@@ -228,6 +232,37 @@ pub async fn execute(action: &PlanCommands, ctx: &Context<'_>) {
     }
 }
 
+async fn get_cut_off_date_or_bail(
+    cutoff_date: Option<NaiveDateTime>,
+    plan_id: i32,
+    ctx: &Context<'_>,
+) -> NaiveDateTime {
+    let plan = ctx
+        .services
+        .plan_service
+        .get_by_id(plan_id)
+        .await
+        .exit_on_err(&format!("❌ Failed to find plan by id '{}'", plan_id));
+
+    if let Some(date) = cutoff_date {
+        Some(date)
+    } else {
+        println!("⚠️ No cutoff date provided, using the last deployment start date");
+        ctx.services
+            .plan_service
+            .get_last_cutoff_date(plan.id)
+            .await
+            .exit_on_err("Failed to get last deployment cutoff date")
+    }
+    .unwrap_or_else(|| {
+        eprintln!(
+            "❌ Failed to determine deployment cutoff date for plan '{}'",
+            plan.name
+        );
+        std::process::exit(1);
+    })
+}
+
 pub async fn add(
     name: &str,
     source: &str,
@@ -409,9 +444,7 @@ pub async fn run(
     );
     spinner.enable_steady_tick(std::time::Duration::from_millis(80));
     spinner.set_message(format!("Running plan '{}'...", name));
-
     let (tx, mut rx) = mpsc::unbounded_channel();
-    let progress = ProgressReporter::new(Some(tx));
 
     let spinner_clone = spinner.clone();
     tokio::spawn(async move {
@@ -420,77 +453,43 @@ pub async fn run(
         }
     });
 
-    let mut plan = ctx
+    let plan = ctx
         .services
         .plan_service
         .find_by_name(name)
         .await
-        .unwrap_or_else(|e| {
-            eprintln!("❌ Failed to find plan '{}': {}", name, e);
-            std::process::exit(1);
-        })
+        .exit_on_err(format!("❌ Failed to find plan '{}'", name).as_str())
         .unwrap_or_else(|| {
             eprintln!("❌ Plan '{}' not found", name);
             std::process::exit(1);
         });
 
-    if let Some(fail_fast) = fail_fast {
-        plan.fail_fast = fail_fast;
-    }
+    let cutoff_date = get_cut_off_date_or_bail(cutoff_date, plan.id, ctx).await;
 
-    let cutoff_date = if let Some(date) = cutoff_date {
-        Some(date)
-    } else {
-        println!("⚠️ No cutoff date provided, using the last deployment start date");
-        let last_deployment = ctx
-            .services
-            .deployment_service
-            .find_last_successful_deployment_by_plan_id(plan.id)
-            .await
-            .unwrap_or_else(|e| {
-                eprintln!(
-                    "❌ Failed to find last deployment for plan '{}': {}",
-                    plan.name, e
-                );
-                std::process::exit(1);
-            })
-            .unwrap_or_else(|| {
-                eprintln!("❌ No deployments found for plan '{}'", plan.name);
-                std::process::exit(1);
-            });
-        last_deployment.started_at
-    }
-    .unwrap_or_else(|| {
-        eprintln!(
-            "❌ Failed to determine deployment cutoff date for plan '{}'",
-            plan.name
-        );
-        std::process::exit(1);
-    });
+    let mut sink =
+        DeploymentSink::new(Some(DeploymentSinkOptions::new(*dry, None, None, Some(tx))))
+            .exit_on_err("Failed to initialize deployment sink"); // TODO: Add more info
 
     let res = ctx
         .services
         .deployment_service
-        .run(plan, cutoff_date, Some(*dry), progress)
+        .prepare_and_run(plan.id, fail_fast.unwrap_or(false), cutoff_date, &mut sink)
         .await;
 
     if res.is_err() {
         error!("Failed to run plan: {:?}", res.as_ref().err());
         std::process::exit(1);
     }
+
+    if sink.is_dry_run() {
+        sink.print_summary("✅ Dry run completed successfully");
+    }
+
     spinner.finish_and_clear();
 
     if show_report {
-        let res = res.unwrap();
-        let details = ctx
-            .services
-            .deployment_service
-            .get_deployment_details_from_result(res)
-            .await
-            .exit_on_err("Failed to get deployment result details");
-
-        println!("{}", "=== Deployment Result ===".blue());
-        println!("{}", details);
+        let _ = res.unwrap();
+        todo!();
     } else {
         println!("✅ Deployment for plan '{}' completed successfully", name);
     }

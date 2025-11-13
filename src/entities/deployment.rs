@@ -118,6 +118,15 @@ impl ActiveModel {
     }
     /// Update status (mutates the model)
     pub fn set_status(&mut self, status: DeploymentStatus) {
+        match status {
+            DeploymentStatus::Running => {
+                self.started_at = Set(Some(Utc::now().naive_utc()));
+            }
+            DeploymentStatus::Success | DeploymentStatus::Error => {
+                self.ended_at = Set(Some(Utc::now().naive_utc()));
+            }
+            _ => {}
+        }
         self.status = Set(status);
         self.updated_at = Set(Some(Utc::now().naive_utc()));
     }
