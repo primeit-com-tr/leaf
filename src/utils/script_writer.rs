@@ -63,7 +63,7 @@ impl ScriptWriter {
                     script_target: None,
                     rollback_target: None,
                     script_sep: None,
-                    mode: ScriptWriterMode::Disabled, // Add this
+                    mode: ScriptWriterMode::Disabled,
                 });
             }
         };

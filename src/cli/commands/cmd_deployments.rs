@@ -1,5 +1,8 @@
+use chrono::NaiveDateTime;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
+use indicatif::{ProgressBar, ProgressStyle};
+use std::path::PathBuf;
 use tabled::{
     Table, Tabled,
     settings::{
@@ -8,10 +11,16 @@ use tabled::{
     },
 };
 use terminal_size::{Width as TermWidth, terminal_size};
+use tokio::sync::mpsc;
 
 use crate::{
-    cli::{Context, commands::ExitOnErr},
-    utils::format_duration,
+    cli::{
+        Context,
+        commands::{ExitOnErr, shared::get_cut_off_date_or_bail},
+    },
+    utils::{
+        DeploymentSink, DeploymentSinkOptions, ProgressReporter, format_duration, validate_dir,
+    },
 };
 
 #[derive(Subcommand, Debug)]
@@ -54,7 +63,24 @@ pub enum DeploymentCommands {
         #[arg(short, default_value = "desc")]
         order: Option<String>,
     },
+
+    /// Show a deployment
     Show(ShowCommand),
+
+    /// Prepare a deployment
+    Prepare {
+        #[arg(long, short, required = true)]
+        plan: String,
+
+        #[arg(long, short, required = false)]
+        cutoff_date: Option<NaiveDateTime>,
+
+        #[arg(long, short, required = false)]
+        dry: bool,
+
+        #[arg(long, short, value_name = "DIR", value_parser = validate_dir)]
+        output_path: Option<PathBuf>,
+    },
 }
 
 #[derive(Tabled)]
@@ -166,6 +192,12 @@ pub async fn execute(action: &DeploymentCommands, ctx: &Context<'_>) {
             },
             None => show_deployment(0, ctx).await, // default behavior when no subcommand is given
         },
+        DeploymentCommands::Prepare {
+            plan,
+            cutoff_date,
+            dry,
+            output_path,
+        } => prepare_deployment(plan, cutoff_date, *dry, output_path, ctx).await,
     }
 }
 
@@ -367,6 +399,7 @@ async fn show_deployment_objects(deployment_id: i32, ctx: &Context<'_>) {
         .to_string();
     println!("{}", table);
 }
+
 async fn show_deployment_changes(deployment_id: i32, ctx: &Context<'_>) {
     let changesets_with_changes = ctx
         .services
@@ -543,4 +576,84 @@ async fn list_deployments(
         .to_string();
 
     println!("{}", table);
+}
+
+async fn prepare_deployment(
+    plan_name: &str,
+    cutoff_date: &Option<NaiveDateTime>,
+    dry: bool,
+    output_path: &Option<PathBuf>,
+    ctx: &Context<'_>,
+) {
+    let spinner = ProgressBar::new_spinner();
+    spinner.set_style(
+        ProgressStyle::default_spinner()
+            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+            .template("{spinner:.cyan} [{elapsed_precise}] {msg}")
+            .unwrap(),
+    );
+    spinner.enable_steady_tick(std::time::Duration::from_millis(80));
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let spinner_clone = spinner.clone();
+    tokio::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+            spinner_clone.set_message(msg);
+        }
+    });
+
+    let mut sink = DeploymentSink::new(Some(DeploymentSinkOptions::new(
+        dry,
+        output_path.clone(),
+        None,
+        Some(tx),
+    )))
+    .exit_on_err("Failed to initialize deployment sink"); // TODO: Add more info
+
+    let plan = ctx
+        .services
+        .plan_service
+        .find_by_name(plan_name)
+        .await
+        .exit_on_err(format!("❌ Failed to find plan '{}'", plan_name).as_str())
+        .unwrap_or_else(|| {
+            eprintln!("❌ Plan '{}' not found", plan_name);
+            std::process::exit(1);
+        });
+
+    let cutoff_date = get_cut_off_date_or_bail(cutoff_date.clone(), plan.id, ctx).await;
+
+    let res = ctx
+        .services
+        .deployment_service
+        .prepare_deployment(plan.id, cutoff_date, &mut sink)
+        .await;
+
+    if res.is_err() {
+        eprintln!("❌ Deployment for plan '{}' failed", plan_name);
+        std::process::exit(1);
+    }
+    match res.unwrap() {
+        Some(deployment_id) => {
+            println!(
+                "✅ Deployment for plan '{}' completed successfully",
+                plan_name
+            );
+            println!("📝 Deployment ID: {}", deployment_id);
+        }
+        None => {
+            println!("✅ Dry run completed successfully");
+        }
+    }
+
+    if sink.is_dry_run() {
+        sink.print_summary("✅ Dry run completed successfully");
+    }
+
+    spinner.finish_and_clear();
+
+    println!(
+        "✅ Deployment for plan '{}' completed successfully",
+        plan_name
+    );
 }
