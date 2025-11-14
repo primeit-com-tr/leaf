@@ -433,7 +433,7 @@ pub async fn run(
     let res = ctx
         .services
         .deployment_service
-        .prepare_and_run(plan.id, fail_fast.unwrap_or(false), cutoff_date, &mut sink)
+        .run(plan.id, fail_fast.unwrap_or(false), cutoff_date, &mut sink)
         .await;
 
     if res.is_err() {

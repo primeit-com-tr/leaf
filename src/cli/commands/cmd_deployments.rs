@@ -16,6 +16,7 @@ use crate::{
         Context,
         commands::{ExitOnErr, new_spinner, shared::get_cut_off_date_or_bail},
     },
+    types::DeploymentStatus,
     utils::{
         DeploymentContext, DeploymentContextOptions, format_duration, parsers::parse_cutoff_date,
         validate_dir,
@@ -82,6 +83,17 @@ pub enum DeploymentCommands {
 
         #[arg(long, value_name = "DIR", value_parser = validate_dir)]
         output_path: Option<PathBuf>,
+    },
+
+    /// Applies a prepared deployment.
+    Apply {
+        /// Deployment ID to apply
+        #[arg(long, required = true)]
+        deployment_id: i32,
+
+        /// Fail fast mode
+        #[arg(long, required = false)]
+        fail_fast: bool,
     },
 }
 
@@ -201,6 +213,11 @@ pub async fn execute(action: &DeploymentCommands, ctx: &Context<'_>) {
             collect_scripts,
             output_path,
         } => prepare_deployment(plan, cutoff_date, *dry, *collect_scripts, output_path, ctx).await,
+
+        DeploymentCommands::Apply {
+            deployment_id,
+            fail_fast,
+        } => apply_deployment(*deployment_id, *fail_fast, ctx).await,
     }
 }
 
@@ -616,7 +633,7 @@ async fn prepare_deployment(
     let res = ctx
         .services
         .deployment_service
-        .prepare_deployment(plan.id, cutoff_date, &mut dctx)
+        .prepare(plan.id, cutoff_date, &mut dctx)
         .await;
 
     spinner.finish_and_clear();
@@ -644,5 +661,64 @@ async fn prepare_deployment(
         "✅ Deployment preparation for plan '{}' completed successfully{}",
         plan_name,
         if dry { " in dry-run mode 👻." } else { "." }
+    );
+}
+
+async fn apply_deployment(deployment_id: i32, fail_fast: bool, ctx: &Context<'_>) {
+    let (spinner, tx) = new_spinner();
+
+    let mut dctx = DeploymentContext::new(Some(DeploymentContextOptions::new(
+        false,
+        false,
+        None,
+        None,
+        Some(tx),
+    )))
+    .exit_on_err("Failed to initialize deployment sink"); // TODO: Add more info
+
+    dctx.progress(format!("Finding deployment by ID '{}'...", deployment_id));
+    let deployment = ctx
+        .services
+        .deployment_service
+        .get_by_id(deployment_id)
+        .await
+        .exit_on_err(format!("❌ Failed to find deployment by id {}", deployment_id).as_str());
+
+    dctx.progress(format!(
+        "Checking deployment status '{}'...",
+        deployment.plan_id
+    ));
+    if deployment.status != DeploymentStatus::Idle {
+        spinner.finish_and_clear();
+        eprintln!(
+            "❌ Deployment with ID '{}' is not in IDLE status. It can not be applied.",
+            deployment_id
+        );
+        std::process::exit(1);
+    }
+
+    let plan = ctx
+        .services
+        .plan_service
+        .get_by_id(deployment.plan_id)
+        .await
+        .exit_on_err(format!("❌ Failed to find plan by id {}", deployment.plan_id).as_str());
+
+    let res = ctx
+        .services
+        .deployment_service
+        .apply(deployment_id, fail_fast, &mut dctx)
+        .await;
+
+    spinner.finish_and_clear();
+
+    if res.is_err() {
+        eprintln!("❌ Deployment for plan '{}' failed", plan.name);
+        std::process::exit(1);
+    }
+
+    println!(
+        "🚀 Deployment for plan '{}' completed successfully.",
+        plan.name
     );
 }

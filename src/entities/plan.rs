@@ -1,7 +1,7 @@
-use sea_orm::{ActiveValue::Set, entity::prelude::*};
+use sea_orm::{ActiveValue::Set, JsonValue, entity::prelude::*};
 use serde::{Deserialize, Serialize};
 
-use crate::types::{PlanStatus, StringList};
+use crate::types::{Hooks, PlanStatus, StringList};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, DeriveEntityModel, Default)]
 #[sea_orm(table_name = "plans")]
@@ -31,6 +31,12 @@ pub struct Model {
     #[sea_orm(column_type = "Integer")]
     pub fail_fast: bool,
 
+    #[sea_orm(column_type = "Integer")]
+    pub disable_hooks: bool,
+
+    #[sea_orm(column_type = "Json", nullable)]
+    pub hooks: Option<JsonValue>,
+
     #[sea_orm(default_value = "IDLE")]
     pub status: PlanStatus,
 
@@ -51,6 +57,20 @@ impl Model {
     /// Deserialize excluded object names from JSON string
     pub fn get_exclude_object_names(&self) -> Option<Vec<String>> {
         self.exclude_object_names.as_ref().map(|e| e.0.clone())
+    }
+
+    /// Get hooks as a typed Hooks struct
+    pub fn get_hooks(&self) -> Result<Option<Hooks>, serde_json::Error> {
+        self.hooks
+            .as_ref()
+            .map(|h| serde_json::from_value(h.clone()))
+            .transpose()
+    }
+
+    /// Set hooks from a Hooks struct (mutates the model)
+    pub fn set_hooks(&mut self, hooks: Option<Hooks>) -> Result<(), serde_json::Error> {
+        self.hooks = hooks.map(|h| serde_json::to_value(h)).transpose()?;
+        Ok(())
     }
 
     /// Update status (mutates the model)
@@ -152,7 +172,11 @@ impl ActiveModel {
         schemas: Vec<String>,
         exclude_object_types: Option<Vec<String>>,
         exclude_object_names: Option<Vec<String>>,
+        disable_hooks: bool,
+        hooks: Option<Hooks>,
     ) -> Result<Self, serde_json::Error> {
+        let hooks_json = hooks.map(|h| serde_json::to_value(h)).transpose()?;
+
         Ok(Self {
             name: Set(name),
             source_connection_id: Set(source_connection_id),
@@ -160,6 +184,8 @@ impl ActiveModel {
             schemas: Set(StringList(schemas)),
             exclude_object_types: Set(exclude_object_types.map(StringList)),
             exclude_object_names: Set(exclude_object_names.map(StringList)),
+            disable_hooks: Set(disable_hooks),
+            hooks: Set(hooks_json),
             created_at: Set(chrono::Utc::now().naive_utc()),
             ..Default::default()
         })

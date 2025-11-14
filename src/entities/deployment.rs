@@ -1,9 +1,9 @@
 use anyhow::Error;
 use chrono::Utc;
-use sea_orm::{ActiveValue::Set, entity::prelude::*};
+use sea_orm::{ActiveValue::Set, JsonValue, entity::prelude::*};
 use serde::{Deserialize, Serialize};
 
-use crate::types::{DeploymentStatus, StringList};
+use crate::types::{DeploymentStatus, Hooks, StringList};
 use sea_orm::ActiveModelBehavior;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, DeriveEntityModel)]
@@ -20,6 +20,12 @@ pub struct Model {
 
     #[sea_orm(column_type = "Text")]
     pub payload: String,
+
+    #[sea_orm(column_type = "Integer")]
+    pub disable_hooks: bool,
+
+    #[sea_orm(column_type = "Json", nullable)]
+    pub hooks: Option<JsonValue>,
 
     #[sea_orm(default_value = "IDLE")]
     pub status: DeploymentStatus,
@@ -46,6 +52,8 @@ impl Default for Model {
             plan_id: 0,
             cutoff_date: Utc::now().naive_utc(),
             payload: String::new(),
+            disable_hooks: false,
+            hooks: None,
             status: DeploymentStatus::default(),
             errors: None,
             created_at: Utc::now().naive_utc(),
@@ -108,6 +116,20 @@ impl Entity {
     }
 }
 
+impl Model {
+    pub fn get_hooks(&self) -> Option<Result<Hooks, serde_json::Error>> {
+        self.hooks
+            .as_ref()
+            .map(|h| serde_json::from_value(h.clone()))
+    }
+
+    /// Set hooks from a Hooks struct (mutates the model)
+    pub fn set_hooks(&mut self, hooks: Option<Hooks>) -> Result<(), serde_json::Error> {
+        self.hooks = hooks.map(|h| serde_json::to_value(h)).transpose()?;
+        Ok(())
+    }
+}
+
 impl ActiveModel {
     pub fn new(plan_id: i32, payload: String) -> Self {
         Self {
@@ -162,5 +184,10 @@ impl ActiveModel {
 
     pub fn set_rollback_error(&mut self) {
         self.set_status(DeploymentStatus::RollbackError);
+    }
+
+    pub fn set_hooks(&mut self, hooks: Option<Hooks>) -> Result<(), serde_json::Error> {
+        self.hooks = Set(hooks.map(|h| serde_json::to_value(h)).transpose()?);
+        Ok(())
     }
 }

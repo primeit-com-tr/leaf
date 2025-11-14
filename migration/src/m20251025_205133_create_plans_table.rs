@@ -40,6 +40,13 @@ impl MigrationTrait for Migration {
                             .default(false),
                     )
                     .col(
+                        ColumnDef::new(Plans::DisableHooks)
+                            .boolean()
+                            .not_null()
+                            .default(false),
+                    )
+                    .col(ColumnDef::new(Plans::Hooks).json())
+                    .col(
                         ColumnDef::new(Plans::Status)
                             .string()
                             .not_null()
@@ -90,6 +97,8 @@ enum Plans {
     ExcludeObjectNames,
     DisabledDropTypes,
     FailFast,
+    DisableHooks,
+    Hooks,
     Status,
     CreatedAt,
 }

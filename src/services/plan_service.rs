@@ -1,17 +1,16 @@
 use std::sync::Arc;
 
 use crate::{
-    config::Settings,
+    config::hooks,
     entities::plan::Model as PlanModel,
     repo::{ConnectionRepository, DeploymentRepository, plan_repo::PlanRepository},
-    types::{PlanStatus, StringList},
+    types::{Hooks, PlanStatus, StringList},
 };
 use anyhow::{Context, Result, anyhow, ensure};
 use chrono::NaiveDateTime;
 
 /// Service layer for Plan business logic
 pub struct PlanService {
-    settings: Settings,
     repo: Arc<PlanRepository>,
     deployment_repo: Arc<DeploymentRepository>,
     connection_repo: Arc<ConnectionRepository>,
@@ -19,13 +18,11 @@ pub struct PlanService {
 
 impl PlanService {
     pub fn new(
-        settings: Settings,
         repo: Arc<PlanRepository>,
         deployment_repo: Arc<DeploymentRepository>,
         connection_repo: Arc<ConnectionRepository>,
     ) -> Self {
         Self {
-            settings,
             repo,
             deployment_repo,
             connection_repo,
@@ -43,6 +40,8 @@ impl PlanService {
         exclude_object_names: Option<Vec<String>>,
         disabled_drop_types: Option<Vec<String>>,
         fail_fast: bool,
+        disable_hooks: bool,
+        hooks: Option<Hooks>,
     ) -> Result<PlanModel> {
         if self.repo.exists_by_name(name).await? {
             anyhow::bail!(
@@ -73,34 +72,18 @@ impl PlanService {
             anyhow::bail!("At least one schema must be specified");
         }
 
-        let combined_exclude_object_types = self
-            .settings
-            .rules
-            .combined_exclude_object_types(exclude_object_types)
-            .map(StringList);
-
-        let combined_exclude_object_names = self
-            .settings
-            .rules
-            .combined_exclude_object_names(exclude_object_names)
-            .map(StringList);
-
-        let combined_disabled_drop_types = self
-            .settings
-            .rules
-            .combined_disabled_drop_types(disabled_drop_types)
-            .map(StringList);
-
         self.repo
             .create(
                 name,
                 source_connection.id,
                 target_connection.id,
                 StringList(schemas.to_vec()),
-                combined_exclude_object_types,
-                combined_exclude_object_names,
-                combined_disabled_drop_types,
+                exclude_object_types.map(StringList),
+                exclude_object_names.map(StringList),
+                disabled_drop_types.map(StringList),
                 fail_fast,
+                disable_hooks,
+                hooks,
             )
             .await
             .context("Failed to create plan")

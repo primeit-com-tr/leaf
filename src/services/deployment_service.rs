@@ -5,18 +5,20 @@ use crate::{
         PlanModel,
     },
     errors::{DeployError, PlanIsNotRunnableError, SchemaValidationError},
+    hooks::{HookRunner, HookRunnerContext},
     oracle::OracleClient,
     repo::{
         ChangeRepository, ChangesetRepository, ConnectionRepository, DeploymentRepository,
         PlanRepository, rollback_repo::RollbackRepository,
     },
-    types::{ChangeStatus, Delta, DeploymentStatus, PlanStatus, RollbackStatus, StringList},
+    types::{ChangeStatus, Delta, DeploymentStatus, Hooks, PlanStatus, RollbackStatus, StringList},
     utils::{DeploymentContext, ProgressReporter},
 };
 use anyhow::{Context, Result, anyhow};
 use chrono::{NaiveDateTime, Utc};
 use sea_orm::IntoActiveModel;
 use std::sync::Arc;
+use tera::Context as TeraContext;
 use tokio::try_join;
 use tracing::warn;
 
@@ -56,14 +58,15 @@ impl DeploymentService {
         &self,
         plan: &PlanModel,
         cutoff_date: NaiveDateTime,
-        start_time: NaiveDateTime,
+        disable_hooks: bool,
     ) -> Result<DeploymentModel> {
         self.repo
             .create(
                 plan.id,
                 cutoff_date,
                 serde_json::to_string(&plan)?,
-                start_time,
+                disable_hooks,
+                plan.get_hooks()?.clone(),
             )
             .await
     }
@@ -203,17 +206,21 @@ impl DeploymentService {
         Ok(())
     }
 
-    pub async fn prepare_and_run(
+    pub async fn run(
         &self,
         plan_id: i32,
         fail_fast: bool,
         cutoff_date: NaiveDateTime,
+        disable_hooks: bool,
         ctx: &mut DeploymentContext,
     ) -> Result<Option<i32>> {
-        match self.prepare_deployment(plan_id, cutoff_date, ctx).await {
+        match self.prepare(plan_id, cutoff_date, disable_hooks, ctx).await {
             Ok(result) => match result {
                 Some(deployment_id) => {
-                    match self.run_deployment(deployment_id, fail_fast, ctx).await {
+                    match self
+                        .apply(deployment_id, fail_fast, disable_hooks, ctx)
+                        .await
+                    {
                         Ok(_) => {
                             // Success - update both statuses
                             self.repo
@@ -240,6 +247,7 @@ impl DeploymentService {
                         }
                     }
                 }
+                // Ifd it's a dry mode.
                 None => Ok(None),
             },
             Err(e) => {
@@ -253,10 +261,35 @@ impl DeploymentService {
         }
     }
 
-    pub async fn prepare_deployment(
+    async fn run_pre_prepare_hooks(
+        &self,
+        disable_hooks: bool,
+        plan: &PlanModel,
+        client: &OracleClient,
+        ctx: &mut DeploymentContext,
+    ) -> Result<()> {
+        let plan_name = plan.name.clone();
+        let mut tera_ctx = TeraContext::new();
+        tera_ctx.insert("plan", &plan_name);
+
+        let progress = |msg: String| {
+            ctx.progress(msg);
+        };
+
+        let mut hook_runner = HookRunner::new(
+            disable_hooks,
+            plan.get_hooks()?,
+            HookRunnerContext::new(tera_ctx, progress),
+        );
+
+        hook_runner.run_pre_prepare_deployment(client).await
+    }
+
+    pub async fn prepare(
         &self,
         plan_id: i32,
         cutoff_date: NaiveDateTime,
+        disable_hooks: bool,
         ctx: &mut DeploymentContext,
     ) -> Result<Option<i32>> {
         let plan = self.plan_repo.get_by_id(plan_id).await?;
@@ -276,7 +309,8 @@ impl DeploymentService {
             let exclude_object_types = plan.get_exclude_object_types();
             let exclude_object_names = plan.get_exclude_object_names();
 
-            let start_time = Utc::now().naive_utc();
+            self.run_pre_prepare_hooks(disable_hooks, &plan, &source_client, ctx)
+                .await?;
 
             ctx.progress(format!("Fetching source objects..."));
             let sources = source_client
@@ -306,7 +340,10 @@ impl DeploymentService {
             let deployment_model: Option<DeploymentModel> = if ctx.is_dry_run() {
                 Ok(None)
             } else {
-                match self.create_deployment(&plan, cutoff_date, start_time).await {
+                match self
+                    .create_deployment(&plan, cutoff_date, disable_hooks)
+                    .await
+                {
                     Ok(model) => Ok(Some(model)),
                     Err(e) => {
                         ctx.progress(format!("Failed to create deployment: {}", e));
@@ -339,10 +376,11 @@ impl DeploymentService {
         result
     }
 
-    async fn run_deployment(
+    pub async fn apply(
         &self,
         deployment_id: i32,
         fail_fast: bool,
+        disable_hooks: bool,
         ctx: &mut DeploymentContext,
     ) -> Result<()> {
         ctx.progress(format!("Applying changes ..."));

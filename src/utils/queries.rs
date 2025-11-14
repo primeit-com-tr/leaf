@@ -6,7 +6,7 @@ use tera::{Context, Tera};
 #[folder = "src/assets/sql/"]
 struct Queries;
 
-pub fn get_query(template_name: &str, context: &Context) -> Result<String> {
+pub fn get_query(template_name: &str, ctx: &Context) -> Result<String> {
     let paths_to_try = vec![
         template_name.to_string(),
         format!("src/assets/sql/{}", template_name),
@@ -17,7 +17,7 @@ pub fn get_query(template_name: &str, context: &Context) -> Result<String> {
             let template_str = std::str::from_utf8(file.data.as_ref()).unwrap();
 
             return Tera::default()
-                .render_str(template_str, context)
+                .render_str(template_str, ctx)
                 .context("Failed to render query");
         }
     }

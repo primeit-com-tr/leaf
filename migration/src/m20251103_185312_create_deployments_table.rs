@@ -15,6 +15,8 @@ impl MigrationTrait for Migration {
                     .col(integer(Deployments::PlanId).not_null())
                     .col(timestamp(Deployments::CutoffDate).not_null())
                     .col(text(Deployments::Payload).not_null())
+                    .col(boolean(Deployments::DisableHooks).not_null().default(false))
+                    .col(ColumnDef::new(Deployments::Hooks).json())
                     .col(string(Deployments::Status).not_null().default("IDLE"))
                     .col(text_null(Deployments::Errors))
                     .col(
@@ -51,6 +53,8 @@ enum Deployments {
     PlanId,
     CutoffDate,
     Payload,
+    DisableHooks,
+    Hooks,
     Status,
     Errors,
     CreatedAt,

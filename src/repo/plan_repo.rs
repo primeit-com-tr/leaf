@@ -1,6 +1,6 @@
 use crate::{
     entities::{PlanActiveModel, PlanColumn, PlanModel, PlansEntity},
-    types::{PlanStatus, StringList},
+    types::{Hooks, PlanStatus, StringList},
 };
 use anyhow::{Context, Result};
 use sea_orm::{
@@ -65,6 +65,8 @@ impl PlanRepository {
         exclude_object_names: Option<StringList>,
         disabled_drop_types: Option<StringList>,
         fail_fast: bool,
+        disable_hooks: bool,
+        hooks: Option<Hooks>,
     ) -> Result<PlanModel> {
         let active_model = PlanActiveModel {
             id: NotSet,
@@ -78,6 +80,8 @@ impl PlanRepository {
             created_at: Set(chrono::Utc::now().naive_utc()),
             disabled_drop_types: Set(disabled_drop_types),
             fail_fast: Set(fail_fast),
+            disable_hooks: Set(disable_hooks),
+            hooks: Set(hooks.map(|h| serde_json::to_value(h)).transpose()?),
             ..Default::default()
         };
 
