@@ -137,6 +137,11 @@ impl DeploymentContext {
         self.dry_run
     }
 
+    /// Returns true if script collection is enabled.
+    pub fn is_collect_scripts(&self) -> bool {
+        self.collect_scripts
+    }
+
     /// Reports progress (no-op if progress reporting is disabled).
     pub fn progress(&mut self, message: impl Into<String>) {
         self.progress_reporter.report(message);

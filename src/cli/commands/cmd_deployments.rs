@@ -619,6 +619,8 @@ async fn prepare_deployment(
         .prepare_deployment(plan.id, cutoff_date, &mut dctx)
         .await;
 
+    spinner.finish_and_clear();
+
     if res.is_err() {
         eprintln!("❌ Deployment for plan '{}' failed", plan_name);
         std::process::exit(1);
@@ -626,24 +628,21 @@ async fn prepare_deployment(
     match res.unwrap() {
         Some(deployment_id) => {
             println!(
-                "✅ Deployment for plan '{}' completed successfully",
+                "✅ Deployment prepared for plan '{}' completed successfully",
                 plan_name
             );
-            println!("📝 Deployment ID: {}", deployment_id);
+            println!("🗝️ Deployment ID: {}", deployment_id);
         }
-        None => {
-            println!("✅ Dry run completed successfully");
-        }
+        None => {}
     }
 
-    if dctx.is_dry_run() {
-        dctx.print_summary("✅ Dry run completed successfully");
+    if dctx.is_collect_scripts() {
+        dctx.print_summary("✅ Collected scripts successfully");
     }
-
-    spinner.finish_and_clear();
 
     println!(
-        "✅ Deployment preparation for plan '{}' completed successfully",
-        plan_name
+        "✅ Deployment preparation for plan '{}' completed successfully{}",
+        plan_name,
+        if dry { " in dry-run mode 👻." } else { "." }
     );
 }
