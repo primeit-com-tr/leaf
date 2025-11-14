@@ -58,14 +58,14 @@ impl DeploymentService {
         &self,
         plan: &PlanModel,
         cutoff_date: NaiveDateTime,
-        disable_hooks: bool,
+        disable_hooks: Option<bool>,
     ) -> Result<DeploymentModel> {
         self.repo
             .create(
                 plan.id,
                 cutoff_date,
                 serde_json::to_string(&plan)?,
-                disable_hooks,
+                disable_hooks.unwrap_or(plan.disable_hooks),
                 plan.get_hooks()?.clone(),
             )
             .await
@@ -211,7 +211,7 @@ impl DeploymentService {
         plan_id: i32,
         fail_fast: bool,
         cutoff_date: NaiveDateTime,
-        disable_hooks: bool,
+        disable_hooks: Option<bool>,
         ctx: &mut DeploymentContext,
     ) -> Result<Option<i32>> {
         match self.prepare(plan_id, cutoff_date, disable_hooks, ctx).await {
@@ -261,35 +261,11 @@ impl DeploymentService {
         }
     }
 
-    async fn run_pre_prepare_hooks(
-        &self,
-        disable_hooks: bool,
-        plan: &PlanModel,
-        client: &OracleClient,
-        ctx: &mut DeploymentContext,
-    ) -> Result<()> {
-        let plan_name = plan.name.clone();
-        let mut tera_ctx = TeraContext::new();
-        tera_ctx.insert("plan", &plan_name);
-
-        let progress = |msg: String| {
-            ctx.progress(msg);
-        };
-
-        let mut hook_runner = HookRunner::new(
-            disable_hooks,
-            plan.get_hooks()?,
-            HookRunnerContext::new(tera_ctx, progress),
-        );
-
-        hook_runner.run_pre_prepare_deployment(client).await
-    }
-
     pub async fn prepare(
         &self,
         plan_id: i32,
         cutoff_date: NaiveDateTime,
-        disable_hooks: bool,
+        disable_hooks: Option<bool>,
         ctx: &mut DeploymentContext,
     ) -> Result<Option<i32>> {
         let plan = self.plan_repo.get_by_id(plan_id).await?;
@@ -309,7 +285,7 @@ impl DeploymentService {
             let exclude_object_types = plan.get_exclude_object_types();
             let exclude_object_names = plan.get_exclude_object_names();
 
-            self.run_pre_prepare_hooks(disable_hooks, &plan, &source_client, ctx)
+            plan.run_pre_prepare_hooks(disable_hooks, &source_client, ctx)
                 .await?;
 
             ctx.progress(format!("Fetching source objects..."));
@@ -380,7 +356,7 @@ impl DeploymentService {
         &self,
         deployment_id: i32,
         fail_fast: bool,
-        disable_hooks: bool,
+        disable_hooks: Option<bool>,
         ctx: &mut DeploymentContext,
     ) -> Result<()> {
         ctx.progress(format!("Applying changes ..."));

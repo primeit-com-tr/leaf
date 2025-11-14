@@ -1,7 +1,14 @@
 use sea_orm::{ActiveValue::Set, JsonValue, entity::prelude::*};
 use serde::{Deserialize, Serialize};
 
-use crate::types::{Hooks, PlanStatus, StringList};
+use crate::{
+    hooks::{HookRunner, HookRunnerContext},
+    oracle::OracleClient,
+    types::{Hooks, PlanStatus, StringList},
+    utils::DeploymentContext,
+};
+use anyhow::Result;
+use tera::Context as TeraContext;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, DeriveEntityModel, Default)]
 #[sea_orm(table_name = "plans")]
@@ -97,6 +104,29 @@ impl Model {
     pub fn as_payload(&self) -> serde_json::Value {
         // reserved for future use
         todo!()
+    }
+
+    pub async fn run_pre_prepare_hooks(
+        &self,
+        disable_hooks: Option<bool>,
+        client: &OracleClient,
+        ctx: &mut DeploymentContext,
+    ) -> Result<()> {
+        let plan_name = self.name.clone();
+        let mut tera_ctx = TeraContext::new();
+        tera_ctx.insert("plan", &plan_name);
+
+        let progress = |msg: String| {
+            ctx.progress(msg);
+        };
+
+        let mut hook_runner = HookRunner::new(
+            disable_hooks.unwrap_or(self.disable_hooks),
+            self.get_hooks()?,
+            HookRunnerContext::new(tera_ctx, progress),
+        );
+
+        hook_runner.run_pre_plan_run(client).await
     }
 }
 
