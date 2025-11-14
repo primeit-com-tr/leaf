@@ -1,4 +1,4 @@
-pub mod deployment_sink;
+pub mod deployment_context;
 pub mod fs;
 pub mod init;
 pub mod logger;
@@ -9,7 +9,7 @@ pub mod script_writer;
 pub mod time;
 pub mod utils;
 
-pub use deployment_sink::{DeploymentSink, DeploymentSinkOptions};
+pub use deployment_context::{DeploymentContext, DeploymentContextOptions};
 pub use fs::validate_dir;
 pub use progress::ProgressReporter;
 pub use queries::get_query;

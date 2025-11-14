@@ -2,7 +2,7 @@ use chrono::NaiveDateTime;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
-use std::path::PathBuf;
+use std::{ops::Deref, path::PathBuf};
 use tabled::{
     Table, Tabled,
     settings::{
@@ -16,11 +16,9 @@ use tokio::sync::mpsc;
 use crate::{
     cli::{
         Context,
-        commands::{ExitOnErr, shared::get_cut_off_date_or_bail},
+        commands::{ExitOnErr, new_spinner, shared::get_cut_off_date_or_bail},
     },
-    utils::{
-        DeploymentSink, DeploymentSinkOptions, ProgressReporter, format_duration, validate_dir,
-    },
+    utils::{DeploymentContext, DeploymentContextOptions, format_duration, validate_dir},
 };
 
 #[derive(Subcommand, Debug)]
@@ -77,6 +75,9 @@ pub enum DeploymentCommands {
 
         #[arg(long, short, required = false)]
         dry: bool,
+
+        #[arg(long, short, required = false)]
+        collect_scripts: Option<bool>,
 
         #[arg(long, short, value_name = "DIR", value_parser = validate_dir)]
         output_path: Option<PathBuf>,
@@ -196,8 +197,9 @@ pub async fn execute(action: &DeploymentCommands, ctx: &Context<'_>) {
             plan,
             cutoff_date,
             dry,
+            collect_scripts,
             output_path,
-        } => prepare_deployment(plan, cutoff_date, *dry, output_path, ctx).await,
+        } => prepare_deployment(plan, cutoff_date, *dry, *collect_scripts, output_path, ctx).await,
     }
 }
 
@@ -582,28 +584,15 @@ async fn prepare_deployment(
     plan_name: &str,
     cutoff_date: &Option<NaiveDateTime>,
     dry: bool,
+    collect_scripts: Option<bool>,
     output_path: &Option<PathBuf>,
     ctx: &Context<'_>,
 ) {
-    let spinner = ProgressBar::new_spinner();
-    spinner.set_style(
-        ProgressStyle::default_spinner()
-            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
-            .template("{spinner:.cyan} [{elapsed_precise}] {msg}")
-            .unwrap(),
-    );
-    spinner.enable_steady_tick(std::time::Duration::from_millis(80));
-    let (tx, mut rx) = mpsc::unbounded_channel();
+    let (spinner, tx) = new_spinner();
 
-    let spinner_clone = spinner.clone();
-    tokio::spawn(async move {
-        while let Some(msg) = rx.recv().await {
-            spinner_clone.set_message(msg);
-        }
-    });
-
-    let mut sink = DeploymentSink::new(Some(DeploymentSinkOptions::new(
+    let mut dctx = DeploymentContext::new(Some(DeploymentContextOptions::new(
         dry,
+        collect_scripts,
         output_path.clone(),
         None,
         Some(tx),
@@ -626,7 +615,7 @@ async fn prepare_deployment(
     let res = ctx
         .services
         .deployment_service
-        .prepare_deployment(plan.id, cutoff_date, &mut sink)
+        .prepare_deployment(plan.id, cutoff_date, &mut dctx)
         .await;
 
     if res.is_err() {
@@ -646,8 +635,8 @@ async fn prepare_deployment(
         }
     }
 
-    if sink.is_dry_run() {
-        sink.print_summary("✅ Dry run completed successfully");
+    if dctx.is_dry_run() {
+        dctx.print_summary("✅ Dry run completed successfully");
     }
 
     spinner.finish_and_clear();

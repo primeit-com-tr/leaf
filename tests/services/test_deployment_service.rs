@@ -4,7 +4,7 @@ use leaf::{
     entities::DeploymentModel,
     oracle::OracleClient,
     services::AppServices,
-    utils::{DeploymentSink, ProgressReporter},
+    utils::{DeploymentContext, ProgressReporter},
 };
 use serial_test::serial;
 use tempfile::NamedTempFile;
@@ -159,7 +159,12 @@ async fn test_run_deployment_single_schema() -> Result<()> {
 
     let deployment_id = services
         .deployment_service
-        .prepare_and_run(plan.id, false, cutoff_date, &mut DeploymentSink::default())
+        .prepare_and_run(
+            plan.id,
+            false,
+            cutoff_date,
+            &mut DeploymentContext::default(),
+        )
         .await?;
 
     match deployment_id {
@@ -203,7 +208,12 @@ async fn test_run_deployment() -> Result<()> {
 
     let deployment = services
         .deployment_service
-        .prepare_and_run(plan.id, false, cutoff_date, &mut DeploymentSink::default())
+        .prepare_and_run(
+            plan.id,
+            false,
+            cutoff_date,
+            &mut DeploymentContext::default(),
+        )
         .await?;
 
     match deployment {
@@ -248,7 +258,12 @@ async fn test_run_deployment_exclude_object_types() -> Result<()> {
 
     let deployment = services
         .deployment_service
-        .prepare_and_run(plan.id, false, cutoff_date, &mut DeploymentSink::default())
+        .prepare_and_run(
+            plan.id,
+            false,
+            cutoff_date,
+            &mut DeploymentContext::default(),
+        )
         .await?;
 
     match deployment {
@@ -293,7 +308,12 @@ async fn test_run_deployment_exclude_object_names() -> Result<()> {
 
     let deployment = services
         .deployment_service
-        .prepare_and_run(plan.id, false, cutoff_date, &mut DeploymentSink::default())
+        .prepare_and_run(
+            plan.id,
+            false,
+            cutoff_date,
+            &mut DeploymentContext::default(),
+        )
         .await?;
 
     match deployment {
@@ -337,7 +357,12 @@ async fn test_run_deployment_disabled_drop_types() -> Result<()> {
 
     let deployment = services
         .deployment_service
-        .prepare_and_run(plan.id, false, cutoff_date, &mut DeploymentSink::default())
+        .prepare_and_run(
+            plan.id,
+            false,
+            cutoff_date,
+            &mut DeploymentContext::default(),
+        )
         .await?;
 
     match deployment {
@@ -383,7 +408,12 @@ async fn test_rollback_deployment() -> Result<()> {
 
     let result = services
         .deployment_service
-        .prepare_and_run(plan_id, false, cutoff_date, &mut DeploymentSink::default())
+        .prepare_and_run(
+            plan_id,
+            false,
+            cutoff_date,
+            &mut DeploymentContext::default(),
+        )
         .await?;
 
     match result {

@@ -7,7 +7,7 @@ pub mod cmd_version;
 pub mod shared;
 
 use clap::Subcommand;
-use shared::get_cut_off_date_or_bail;
+pub use shared::{get_cut_off_date_or_bail, new_spinner};
 
 use crate::cli::commands::{
     cmd_connections::ConnectionCommands,

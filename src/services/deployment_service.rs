@@ -11,7 +11,7 @@ use crate::{
         PlanRepository, rollback_repo::RollbackRepository,
     },
     types::{ChangeStatus, Delta, DeploymentStatus, PlanStatus, RollbackStatus, StringList},
-    utils::{DeploymentSink, ProgressReporter},
+    utils::{DeploymentContext, ProgressReporter},
 };
 use anyhow::{Context, Result, anyhow};
 use chrono::{NaiveDateTime, Utc};
@@ -103,14 +103,14 @@ impl DeploymentService {
     async fn validate_plan_is_runnable(
         &self,
         plan: &PlanModel,
-        sink: &mut DeploymentSink,
+        ctx: &mut DeploymentContext,
     ) -> Result<()> {
-        sink.progress(format!("Checking if plan '{}' is runnable...", plan.name));
+        ctx.progress(format!("Checking if plan '{}' is runnable...", plan.name));
         if self.plan_repo.is_running(plan.id).await? {
             return Err(PlanIsNotRunnableError::PlanIsAlreadyRunning)
                 .context(format!("Plan '{}' is already running", plan.name));
         }
-        sink.progress(format!(
+        ctx.progress(format!(
             "Checking if source or target connection is in use..."
         ));
         let (source_in_use, target_in_use) = try_join!(
@@ -139,17 +139,17 @@ impl DeploymentService {
         &self,
         deployment_model: Option<DeploymentModel>,
         deltas: &Vec<Delta>,
-        sink: &mut DeploymentSink,
+        ctx: &mut DeploymentContext,
     ) -> Result<()> {
         for (i, delta) in deltas.into_iter().enumerate() {
             if delta.source_ddl == delta.target_ddl {
-                sink.progress(format!(
+                ctx.progress(format!(
                     "Skipping changeset for {}.{} because source and target DDLs are the same",
                     delta.object_owner, delta.object_name,
                 ));
                 continue;
             }
-            sink.progress(format!(
+            ctx.progress(format!(
                 "Creating changeset {} of {} for '{} {}.{}'",
                 i + 1,
                 deltas.len(),
@@ -158,7 +158,7 @@ impl DeploymentService {
                 delta.object_name
             ));
 
-            let changeset: Option<ChangesetModel> = if sink.is_dry_run() {
+            let changeset: Option<ChangesetModel> = if ctx.is_dry_run() {
                 Ok(None)
             } else {
                 let deployment_id = deployment_model.as_ref().map(|d| d.id).unwrap();
@@ -176,7 +176,7 @@ impl DeploymentService {
                 {
                     Ok(model) => Ok(Some(model)),
                     Err(e) => {
-                        sink.progress(format!("Failed to create changeset: {}", e));
+                        ctx.progress(format!("Failed to create changeset: {}", e));
                         Err(e)
                     }
                 }
@@ -186,9 +186,9 @@ impl DeploymentService {
             let rollback_scripts = &delta.rollback_scripts;
 
             for (script, rollback) in scripts.into_iter().zip(rollback_scripts.into_iter()) {
-                if sink.is_dry_run() {
-                    sink.write_script(script.as_str())?;
-                    sink.write_rollback_script(rollback.as_str())?;
+                if ctx.is_dry_run() {
+                    ctx.write_script(script.as_str())?;
+                    ctx.write_rollback_script(rollback.as_str())?;
                 } else {
                     self.change_repo
                         .create(
@@ -208,12 +208,12 @@ impl DeploymentService {
         plan_id: i32,
         fail_fast: bool,
         cutoff_date: NaiveDateTime,
-        sink: &mut DeploymentSink,
+        ctx: &mut DeploymentContext,
     ) -> Result<Option<i32>> {
-        match self.prepare_deployment(plan_id, cutoff_date, sink).await {
+        match self.prepare_deployment(plan_id, cutoff_date, ctx).await {
             Ok(result) => match result {
                 Some(deployment_id) => {
-                    match self.run_deployment(deployment_id, fail_fast, sink).await {
+                    match self.run_deployment(deployment_id, fail_fast, ctx).await {
                         Ok(_) => {
                             // Success - update both statuses
                             self.repo
@@ -222,7 +222,7 @@ impl DeploymentService {
                             self.plan_repo
                                 .set_status(plan_id, PlanStatus::Success)
                                 .await?;
-                            sink.progress("✅ Deployment completed successfully");
+                            ctx.progress("✅ Deployment completed successfully");
                             Ok(Some(deployment_id))
                         }
                         Err(e) => {
@@ -231,7 +231,7 @@ impl DeploymentService {
                                 .map(|DeployError::Errors(count, errors)| (*count, errors.clone()))
                                 .unwrap_or_else(|| (1, vec![e.to_string()]));
 
-                            sink.progress(format!("❌ Deployment failed with {} error(s)", count));
+                            ctx.progress(format!("❌ Deployment failed with {} error(s)", count));
                             self.plan_repo
                                 .set_status(plan_id, PlanStatus::Error)
                                 .await?;
@@ -247,7 +247,7 @@ impl DeploymentService {
                 self.plan_repo
                     .set_status(plan_id, PlanStatus::Error)
                     .await?;
-                sink.progress(format!("❌ Failed to prepare deployment: {}", e));
+                ctx.progress(format!("❌ Failed to prepare deployment: {}", e));
                 Err(e)
             }
         }
@@ -257,19 +257,19 @@ impl DeploymentService {
         &self,
         plan_id: i32,
         cutoff_date: NaiveDateTime,
-        sink: &mut DeploymentSink,
+        ctx: &mut DeploymentContext,
     ) -> Result<Option<i32>> {
         let plan = self.plan_repo.get_by_id(plan_id).await?;
         let plan_id = plan.id;
 
-        sink.progress(format!("Preparing deployment for plan '{}' ...", plan.name));
+        ctx.progress(format!("Preparing deployment for plan '{}' ...", plan.name));
 
         let result = async {
             let source_client = self.get_client(plan.source_connection_id).await?;
             let target_client = self.get_client(plan.target_connection_id).await?;
             let schemas = plan.get_schemas();
 
-            sink.progress(format!("Validating schemas..."));
+            ctx.progress(format!("Validating schemas..."));
             self.validate_schemas(&source_client, &schemas).await?;
             self.validate_schemas(&target_client, &schemas).await?;
 
@@ -278,7 +278,7 @@ impl DeploymentService {
 
             let start_time = Utc::now().naive_utc();
 
-            sink.progress(format!("Fetching source objects..."));
+            ctx.progress(format!("Fetching source objects..."));
             let sources = source_client
                 .get_objects_with_ddls(
                     schemas.clone(),
@@ -287,41 +287,41 @@ impl DeploymentService {
                     exclude_object_names.clone(),
                 )
                 .await?;
-            sink.progress(format!("Fetched {} source objects", sources.len()));
+            ctx.progress(format!("Fetched {} source objects", sources.len()));
 
-            sink.progress(format!("Fetching target objects..."));
+            ctx.progress(format!("Fetching target objects..."));
 
             let targets = target_client
                 .get_objects_with_ddls(schemas, None, exclude_object_types, exclude_object_names)
                 .await?;
-            sink.progress(format!("Fetched {} target objects", targets.len()));
+            ctx.progress(format!("Fetched {} target objects", targets.len()));
 
-            sink.progress(format!("Finding deltas..."));
+            ctx.progress(format!("Finding deltas..."));
             let deltas = find_deltas(sources, targets);
 
             let disabled_drop_types = plan.disabled_drop_types.clone().map(|sl| sl.0);
             let deltas = with_disabled_drop_types_excluded(deltas, disabled_drop_types.clone());
 
-            sink.progress(format!("Creating deployment..."));
-            let deployment_model: Option<DeploymentModel> = if sink.is_dry_run() {
+            ctx.progress(format!("Creating deployment..."));
+            let deployment_model: Option<DeploymentModel> = if ctx.is_dry_run() {
                 Ok(None)
             } else {
                 match self.create_deployment(&plan, cutoff_date, start_time).await {
                     Ok(model) => Ok(Some(model)),
                     Err(e) => {
-                        sink.progress(format!("Failed to create deployment: {}", e));
+                        ctx.progress(format!("Failed to create deployment: {}", e));
                         Err(e)
                     }
                 }
             }?;
 
             if deltas.is_empty() {
-                sink.progress(format!("No changes found for plan '{}'", plan.name));
+                ctx.progress(format!("No changes found for plan '{}'", plan.name));
                 warn!("No changes found for plan {}", plan.name);
                 return Ok(None);
             }
             let deployment_id: Option<i32> = deployment_model.as_ref().map(|d| d.id);
-            self.create_changesets(deployment_model, &deltas, sink)
+            self.create_changesets(deployment_model, &deltas, ctx)
                 .await?;
 
             Ok(deployment_id)
@@ -343,22 +343,22 @@ impl DeploymentService {
         &self,
         deployment_id: i32,
         fail_fast: bool,
-        sink: &mut DeploymentSink,
+        ctx: &mut DeploymentContext,
     ) -> Result<()> {
-        sink.progress(format!("Applying changes ..."));
+        ctx.progress(format!("Applying changes ..."));
 
         let deployment = self.repo.get_by_id(deployment_id).await?;
         let plan_id = deployment.plan_id;
 
         let plan = self.plan_repo.get_by_id(plan_id).await?;
-        self.validate_plan_is_runnable(&plan, sink).await?;
+        self.validate_plan_is_runnable(&plan, ctx).await?;
 
-        sink.progress(format!("Setting plan '{}' status to RUNNING...", plan.name));
+        ctx.progress(format!("Setting plan '{}' status to RUNNING...", plan.name));
         self.plan_repo
             .set_status(plan_id, PlanStatus::Running)
             .await?;
 
-        sink.progress(format!(
+        ctx.progress(format!(
             "Setting deployment '{}' status to RUNNING...",
             deployment_id
         ));
@@ -366,7 +366,7 @@ impl DeploymentService {
             .set_status(deployment_id, DeploymentStatus::Running)
             .await?;
 
-        sink.progress(format!(
+        ctx.progress(format!(
             "Retrieving changesets for deployment ID('{}')...",
             deployment_id
         ));
@@ -376,14 +376,14 @@ impl DeploymentService {
             .await?;
 
         if changesets_with_changes.is_empty() {
-            sink.progress(format!(
+            ctx.progress(format!(
                 "No changesets found for deployment {}. Skipping deployment...",
                 deployment_id
             ));
             return Ok(());
         }
 
-        sink.progress(format!("Getting target client for plan '{}'...", plan.name));
+        ctx.progress(format!("Getting target client for plan '{}'...", plan.name));
         let client = self.get_client(plan.target_connection_id).await?;
 
         let mut errors: Vec<String> = Vec::new();
@@ -393,7 +393,7 @@ impl DeploymentService {
             let object_name = changeset.object_name.clone();
 
             if changes.is_empty() {
-                sink.progress(format!(
+                ctx.progress(format!(
                     "Skipping changeset for '{} {}.{}' because no changes were found",
                     object_type, object_owner, object_name
                 ));
@@ -418,7 +418,7 @@ impl DeploymentService {
 
                 self.change_repo.save_change(&change_active).await?;
 
-                sink.progress(format!(
+                ctx.progress(format!(
                     "Executing change for '{} {}.{}'",
                     object_type, object_owner, object_name
                 ));

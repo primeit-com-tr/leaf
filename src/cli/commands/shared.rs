@@ -1,6 +1,8 @@
 use chrono::NaiveDateTime;
 
 use crate::cli::{Context, commands::ExitOnErr};
+use indicatif::{ProgressBar, ProgressStyle};
+use tokio::sync::mpsc;
 
 pub async fn get_cut_off_date_or_bail(
     cutoff_date: Option<NaiveDateTime>,
@@ -31,4 +33,26 @@ pub async fn get_cut_off_date_or_bail(
         );
         std::process::exit(1);
     })
+}
+
+pub fn new_spinner() -> (ProgressBar, mpsc::UnboundedSender<String>) {
+    let spinner = ProgressBar::new_spinner();
+    spinner.set_style(
+        ProgressStyle::default_spinner()
+            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+            .template("{spinner:.cyan} [{elapsed_precise}] {msg}")
+            .unwrap(),
+    );
+    spinner.enable_steady_tick(std::time::Duration::from_millis(80));
+
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let pb_clone = spinner.clone();
+
+    tokio::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+            pb_clone.set_message(msg);
+        }
+    });
+
+    (spinner, tx)
 }

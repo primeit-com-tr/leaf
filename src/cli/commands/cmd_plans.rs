@@ -10,11 +10,11 @@ use tracing::error;
 use crate::{
     cli::{
         Context,
-        commands::{ExitOnErr, shared::get_cut_off_date_or_bail},
+        commands::{ExitOnErr, get_cut_off_date_or_bail, new_spinner},
     },
     types::PlanStatus,
     utils::{
-        DeploymentSink, ProgressReporter, deployment_sink::DeploymentSinkOptions,
+        DeploymentContext, ProgressReporter, deployment_context::DeploymentContextOptions,
         parsers::parse_cutoff_date,
     },
 };
@@ -406,23 +406,7 @@ pub async fn run(
     show_report: bool,
     ctx: &Context<'_>,
 ) {
-    let spinner = ProgressBar::new_spinner();
-    spinner.set_style(
-        ProgressStyle::default_spinner()
-            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
-            .template("{spinner:.cyan} [{elapsed_precise}] {msg}")
-            .unwrap(),
-    );
-    spinner.enable_steady_tick(std::time::Duration::from_millis(80));
-    spinner.set_message(format!("Running plan '{}'...", name));
-    let (tx, mut rx) = mpsc::unbounded_channel();
-
-    let spinner_clone = spinner.clone();
-    tokio::spawn(async move {
-        while let Some(msg) = rx.recv().await {
-            spinner_clone.set_message(msg);
-        }
-    });
+    let (spinner, tx) = new_spinner();
 
     let plan = ctx
         .services
@@ -437,9 +421,14 @@ pub async fn run(
 
     let cutoff_date = get_cut_off_date_or_bail(cutoff_date, plan.id, ctx).await;
 
-    let mut sink =
-        DeploymentSink::new(Some(DeploymentSinkOptions::new(*dry, None, None, Some(tx))))
-            .exit_on_err("Failed to initialize deployment sink"); // TODO: Add more info
+    let mut sink = DeploymentContext::new(Some(DeploymentContextOptions::new(
+        *dry,
+        None, // todo
+        None,
+        None,
+        Some(tx),
+    )))
+    .exit_on_err("Failed to initialize deployment sink"); // TODO: Add more info
 
     let res = ctx
         .services
