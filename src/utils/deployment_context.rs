@@ -10,7 +10,7 @@ pub struct DeploymentContextOptions {
     /// If true, runs in dry-run mode (no actual changes applied).
     pub dry: bool,
     /// If true, enables script collection. Default is false (disabled).
-    pub collect_scripts: Option<bool>,
+    pub collect_scripts: bool,
     /// Optional directory path for writing script files.
     /// If None, scripts are written to memory or disabled entirely.
     pub output_path: Option<PathBuf>,
@@ -24,7 +24,7 @@ pub struct DeploymentContextOptions {
 impl DeploymentContextOptions {
     pub fn new(
         dry: bool,
-        collect_scripts: Option<bool>,
+        collect_scripts: bool,
         output_path: Option<PathBuf>,
         script_sep: Option<String>,
         progress_tx: Option<mpsc::UnboundedSender<String>>,
@@ -43,9 +43,7 @@ impl DeploymentContextOptions {
     /// - `collect_scripts` is false/None but `output_path` is provided
     /// - `collect_scripts` is false/None but `script_sep` is provided
     pub fn validate(&self) -> Result<()> {
-        let collect_enabled = self.collect_scripts.unwrap_or(false);
-
-        if !collect_enabled {
+        if !self.collect_scripts {
             if self.output_path.is_some() {
                 return Err(Error::new(
                     ErrorKind::InvalidInput,
@@ -71,7 +69,7 @@ impl Default for DeploymentContextOptions {
     fn default() -> Self {
         Self {
             dry: false,
-            collect_scripts: None, // Defaults to false (disabled)
+            collect_scripts: false,
             output_path: None,
             script_sep: None,
             progress_tx: None,
@@ -90,6 +88,7 @@ impl Default for DeploymentContext {
 #[derive(Debug)]
 pub struct DeploymentContext {
     dry_run: bool,
+    collect_scripts: bool,
     script_writer: ScriptWriter,
     progress_reporter: ProgressReporter,
 }
@@ -110,11 +109,8 @@ impl DeploymentContext {
         // Validate options consistency
         opts.validate()?;
 
-        // Determine if script collection is enabled (defaults to false)
-        let collect_scripts = opts.collect_scripts.unwrap_or(false);
-
         // Configure ScriptWriter based on collect_scripts flag
-        let script_writer_opts = if collect_scripts {
+        let script_writer_opts = if opts.collect_scripts {
             Some(ScriptWriterOptions {
                 dir: opts.output_path, // Memory mode if None
                 script_sep: opts.script_sep,
@@ -130,6 +126,7 @@ impl DeploymentContext {
 
         Ok(Self {
             dry_run: opts.dry,
+            collect_scripts: opts.collect_scripts,
             script_writer,
             progress_reporter,
         })
@@ -237,7 +234,7 @@ mod tests {
     fn test_deployment_sink_scripts_disabled_by_default() {
         let opts = DeploymentContextOptions {
             dry: true,
-            collect_scripts: None, // Defaults to false
+            collect_scripts: false,
             output_path: None,
             script_sep: Some(";\n".to_string()),
             progress_tx: None,
@@ -257,7 +254,7 @@ mod tests {
     fn test_deployment_sink_scripts_explicitly_disabled() {
         let opts = DeploymentContextOptions {
             dry: true,
-            collect_scripts: Some(false),
+            collect_scripts: false,
             output_path: None,
             script_sep: Some(";\n".to_string()),
             progress_tx: None,
@@ -274,7 +271,7 @@ mod tests {
     fn test_deployment_sink_scripts_enabled() {
         let opts = DeploymentContextOptions {
             dry: true,
-            collect_scripts: Some(true),
+            collect_scripts: true,
             output_path: None, // Memory mode
             script_sep: Some(";\n".to_string()),
             progress_tx: None,
@@ -295,7 +292,7 @@ mod tests {
 
         let opts = DeploymentContextOptions {
             dry: false,
-            collect_scripts: None,
+            collect_scripts: false,
             output_path: None,
             script_sep: None,
             progress_tx: Some(tx),
@@ -313,7 +310,7 @@ mod tests {
     fn test_validation_output_path_without_collect_scripts() {
         let opts = DeploymentContextOptions {
             dry: false,
-            collect_scripts: None, // Defaults to false
+            collect_scripts: false,
             output_path: Some(PathBuf::from("/tmp/scripts")),
             script_sep: None,
             progress_tx: None,
@@ -333,7 +330,7 @@ mod tests {
     fn test_validation_script_sep_without_collect_scripts() {
         let opts = DeploymentContextOptions {
             dry: false,
-            collect_scripts: Some(false),
+            collect_scripts: false,
             output_path: None,
             script_sep: Some(";\n".to_string()),
             progress_tx: None,
@@ -353,7 +350,7 @@ mod tests {
     fn test_validation_both_invalid_options() {
         let opts = DeploymentContextOptions {
             dry: false,
-            collect_scripts: None,
+            collect_scripts: false,
             output_path: Some(PathBuf::from("/tmp/scripts")),
             script_sep: Some(";\n".to_string()),
             progress_tx: None,
@@ -374,7 +371,7 @@ mod tests {
     fn test_validation_passes_with_collect_scripts_enabled() {
         let opts = DeploymentContextOptions {
             dry: false,
-            collect_scripts: Some(true),
+            collect_scripts: true,
             output_path: Some(PathBuf::from("/tmp/scripts")),
             script_sep: Some(";\n".to_string()),
             progress_tx: None,

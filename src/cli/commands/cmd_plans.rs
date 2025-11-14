@@ -423,7 +423,7 @@ pub async fn run(
 
     let mut sink = DeploymentContext::new(Some(DeploymentContextOptions::new(
         *dry,
-        None, // todo
+        false,
         None,
         None,
         Some(tx),

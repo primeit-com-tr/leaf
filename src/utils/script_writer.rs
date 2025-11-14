@@ -3,6 +3,8 @@ use std::fs::OpenOptions;
 use std::io::{Result, Write};
 use std::path::{Path, PathBuf};
 
+use crate::utils::normalize_sql;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScriptWriterMode {
     /// Scripts are disabled (no writing).
@@ -109,35 +111,30 @@ impl ScriptWriter {
     /// Appends content followed by the defined separator to the main script target.
     /// If the writer is disabled, this is a no-op.
     pub fn write_script(&mut self, content: &str) -> Result<()> {
-        // If disabled, return immediately.
         let target = match self.script_target.as_mut() {
             Some(t) => t,
             None => return Ok(()),
         };
 
-        // If enabled, script_sep must be present.
         let sep = self.script_sep.as_ref().unwrap();
+        let normalized = normalize_sql(content);
 
-        // Append content (no implicit newline in append)
-        Self::append(target, content)?;
-
-        // Append separator.
+        Self::append(target, &normalized)?;
         Self::append(target, sep)
     }
 
     /// Appends content followed by the defined separator to the rollback script target.
     /// If the writer is disabled, this is a no-op.
     pub fn write_rollback_script(&mut self, content: &str) -> Result<()> {
-        // If disabled, return immediately.
         let target = match self.rollback_target.as_mut() {
             Some(t) => t,
             None => return Ok(()),
         };
 
-        // If enabled, script_sep must be present.
         let sep = self.script_sep.as_ref().unwrap();
+        let normalized = normalize_sql(content);
 
-        Self::append(target, content)?;
+        Self::append(target, &normalized)?;
         Self::append(target, sep)
     }
 

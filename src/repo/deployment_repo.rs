@@ -1,10 +1,8 @@
 use crate::{
     entities::{
-        ChangeColumn, ChangeModel, ChangesEntity, ChangesetColumn, ChangesetModel,
-        ChangesetsEntity, DeploymentActiveModel, DeploymentColumn, DeploymentModel,
-        DeploymentsEntity, RollbackModel,
+        DeploymentActiveModel, DeploymentColumn, DeploymentModel,
+        DeploymentsEntity,
     },
-    errors,
     types::{DeploymentStatus, StringList},
 };
 use anyhow::{Context, Result};

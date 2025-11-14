@@ -25,6 +25,15 @@ pub fn get_query(template_name: &str, context: &Context) -> Result<String> {
     Err(anyhow::anyhow!("Failed to find query template"))
 }
 
+pub fn normalize_sql(content: &str) -> String {
+    let trimmed = content.trim_end();
+    if trimmed.ends_with(';') {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed};")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

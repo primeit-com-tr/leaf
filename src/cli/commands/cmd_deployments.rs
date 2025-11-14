@@ -1,8 +1,7 @@
 use chrono::NaiveDateTime;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use indicatif::{ProgressBar, ProgressStyle};
-use std::{ops::Deref, path::PathBuf};
+use std::path::PathBuf;
 use tabled::{
     Table, Tabled,
     settings::{
@@ -11,14 +10,16 @@ use tabled::{
     },
 };
 use terminal_size::{Width as TermWidth, terminal_size};
-use tokio::sync::mpsc;
 
 use crate::{
     cli::{
         Context,
         commands::{ExitOnErr, new_spinner, shared::get_cut_off_date_or_bail},
     },
-    utils::{DeploymentContext, DeploymentContextOptions, format_duration, validate_dir},
+    utils::{
+        DeploymentContext, DeploymentContextOptions, format_duration, parsers::parse_cutoff_date,
+        validate_dir,
+    },
 };
 
 #[derive(Subcommand, Debug)]
@@ -67,19 +68,19 @@ pub enum DeploymentCommands {
 
     /// Prepare a deployment
     Prepare {
-        #[arg(long, short, required = true)]
+        #[arg(long, required = true)]
         plan: String,
 
-        #[arg(long, short, required = false)]
+        #[arg(long, required = false, value_parser = parse_cutoff_date)]
         cutoff_date: Option<NaiveDateTime>,
 
-        #[arg(long, short, required = false)]
+        #[arg(long, required = false)]
         dry: bool,
 
-        #[arg(long, short, required = false)]
-        collect_scripts: Option<bool>,
+        #[arg(long, required = false)]
+        collect_scripts: bool,
 
-        #[arg(long, short, value_name = "DIR", value_parser = validate_dir)]
+        #[arg(long, value_name = "DIR", value_parser = validate_dir)]
         output_path: Option<PathBuf>,
     },
 }
@@ -584,7 +585,7 @@ async fn prepare_deployment(
     plan_name: &str,
     cutoff_date: &Option<NaiveDateTime>,
     dry: bool,
-    collect_scripts: Option<bool>,
+    collect_scripts: bool,
     output_path: &Option<PathBuf>,
     ctx: &Context<'_>,
 ) {
@@ -642,7 +643,7 @@ async fn prepare_deployment(
     spinner.finish_and_clear();
 
     println!(
-        "✅ Deployment for plan '{}' completed successfully",
+        "✅ Deployment preparation for plan '{}' completed successfully",
         plan_name
     );
 }
