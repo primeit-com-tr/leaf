@@ -1,7 +1,14 @@
-use sea_orm::{ActiveValue::Set, entity::prelude::*};
+use sea_orm::{ActiveValue::Set, JsonValue, entity::prelude::*};
 use serde::{Deserialize, Serialize};
 
-use crate::types::{PlanStatus, StringList};
+use crate::{
+    hooks::{HookRunner, HookRunnerContext},
+    oracle::OracleClient,
+    types::{Hooks, PlanStatus, StringList},
+    utils::DeploymentContext,
+};
+use anyhow::Result;
+use tera::Context as TeraContext;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, DeriveEntityModel, Default)]
 #[sea_orm(table_name = "plans")]
@@ -29,7 +36,16 @@ pub struct Model {
     pub disabled_drop_types: Option<StringList>,
 
     #[sea_orm(column_type = "Integer")]
+    pub disable_all_drops: bool,
+
+    #[sea_orm(column_type = "Integer")]
     pub fail_fast: bool,
+
+    #[sea_orm(column_type = "Integer")]
+    pub disable_hooks: bool,
+
+    #[sea_orm(column_type = "Json", nullable)]
+    pub hooks: Option<JsonValue>,
 
     #[sea_orm(default_value = "IDLE")]
     pub status: PlanStatus,
@@ -53,30 +69,109 @@ impl Model {
         self.exclude_object_names.as_ref().map(|e| e.0.clone())
     }
 
-    /// Update status (mutates the model)
-    pub fn set_status(&mut self, status: PlanStatus) {
-        self.status = status;
-    }
-
-    pub fn set_running(&mut self) {
-        self.set_status(PlanStatus::Running);
-    }
-
-    pub fn set_rolling_back(&mut self) {
-        self.set_status(PlanStatus::RollingBack);
-    }
-
-    pub fn set_rolled_back(&mut self) {
-        self.set_status(PlanStatus::RolledBack);
-    }
-
-    pub fn set_rollback_error(&mut self) {
-        self.set_status(PlanStatus::RollbackError);
+    /// Get hooks as a typed Hooks struct
+    pub fn get_hooks(&self) -> Result<Option<Hooks>, serde_json::Error> {
+        self.hooks
+            .as_ref()
+            .map(|h| serde_json::from_value(h.clone()))
+            .transpose()
     }
 
     pub fn as_payload(&self) -> serde_json::Value {
         // reserved for future use
         todo!()
+    }
+
+    pub async fn run_pre_prepare_hooks(
+        &self,
+        disable_hooks: Option<bool>,
+        client: &OracleClient,
+        ctx: &mut DeploymentContext,
+    ) -> Result<()> {
+        let plan_name = self.name.clone();
+        let mut tera_ctx = TeraContext::new();
+        tera_ctx.insert("plan", &plan_name);
+
+        let progress = |msg: String| {
+            ctx.progress(msg);
+        };
+
+        let mut hook_runner = HookRunner::new(
+            disable_hooks.unwrap_or(self.disable_hooks),
+            self.get_hooks()?,
+            HookRunnerContext::new(tera_ctx, progress),
+        );
+
+        hook_runner.run_pre_prepare_deployment(client).await
+    }
+
+    pub async fn run_post_prepare_hooks(
+        &self,
+        disable_hooks: Option<bool>,
+        client: &OracleClient,
+        ctx: &mut DeploymentContext,
+    ) -> Result<()> {
+        let plan_name = self.name.clone();
+        let mut tera_ctx = TeraContext::new();
+        tera_ctx.insert("plan", &plan_name);
+
+        let progress = |msg: String| {
+            ctx.progress(msg);
+        };
+
+        let mut hook_runner = HookRunner::new(
+            disable_hooks.unwrap_or(self.disable_hooks),
+            self.get_hooks()?,
+            HookRunnerContext::new(tera_ctx, progress),
+        );
+
+        hook_runner.run_post_apply_deployment(client).await
+    }
+
+    pub async fn run_pre_apply_hooks(
+        &self,
+        disable_hooks: Option<bool>,
+        client: &OracleClient,
+        ctx: &mut DeploymentContext,
+    ) -> Result<()> {
+        let plan_name = self.name.clone();
+        let mut tera_ctx = TeraContext::new();
+        tera_ctx.insert("plan", &plan_name);
+
+        let progress = |msg: String| {
+            ctx.progress(msg);
+        };
+
+        let mut hook_runner = HookRunner::new(
+            disable_hooks.unwrap_or(self.disable_hooks),
+            self.get_hooks()?,
+            HookRunnerContext::new(tera_ctx, progress),
+        );
+
+        hook_runner.run_pre_apply_deployment(client).await
+    }
+
+    pub async fn run_post_apply_hooks(
+        &self,
+        disable_hooks: Option<bool>,
+        client: &OracleClient,
+        ctx: &mut DeploymentContext,
+    ) -> Result<()> {
+        let plan_name = self.name.clone();
+        let mut tera_ctx = TeraContext::new();
+        tera_ctx.insert("plan", &plan_name);
+
+        let progress = |msg: String| {
+            ctx.progress(msg);
+        };
+
+        let mut hook_runner = HookRunner::new(
+            disable_hooks.unwrap_or(self.disable_hooks),
+            self.get_hooks()?,
+            HookRunnerContext::new(tera_ctx, progress),
+        );
+
+        hook_runner.run_post_apply_deployment(client).await
     }
 }
 
@@ -152,7 +247,11 @@ impl ActiveModel {
         schemas: Vec<String>,
         exclude_object_types: Option<Vec<String>>,
         exclude_object_names: Option<Vec<String>>,
+        disable_hooks: bool,
+        hooks: Option<Hooks>,
     ) -> Result<Self, serde_json::Error> {
+        let hooks_json = hooks.map(|h| serde_json::to_value(h)).transpose()?;
+
         Ok(Self {
             name: Set(name),
             source_connection_id: Set(source_connection_id),
@@ -160,6 +259,8 @@ impl ActiveModel {
             schemas: Set(StringList(schemas)),
             exclude_object_types: Set(exclude_object_types.map(StringList)),
             exclude_object_names: Set(exclude_object_names.map(StringList)),
+            disable_hooks: Set(disable_hooks),
+            hooks: Set(hooks_json),
             created_at: Set(chrono::Utc::now().naive_utc()),
             ..Default::default()
         })

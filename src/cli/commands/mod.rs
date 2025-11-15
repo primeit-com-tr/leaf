@@ -4,8 +4,10 @@ pub mod cmd_deployments;
 pub mod cmd_init;
 pub mod cmd_plans;
 pub mod cmd_version;
+pub mod shared;
 
 use clap::Subcommand;
+pub use shared::{get_cut_off_date_or_bail, new_spinner};
 
 use crate::cli::commands::{
     cmd_connections::ConnectionCommands,

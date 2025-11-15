@@ -34,11 +34,24 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Plans::ExcludeObjectNames).text())
                     .col(ColumnDef::new(Plans::DisabledDropTypes).text())
                     .col(
+                        ColumnDef::new(Plans::DisableAllDrops)
+                            .boolean()
+                            .not_null()
+                            .default(true),
+                    )
+                    .col(
                         ColumnDef::new(Plans::FailFast)
                             .boolean()
                             .not_null()
                             .default(false),
                     )
+                    .col(
+                        ColumnDef::new(Plans::DisableHooks)
+                            .boolean()
+                            .not_null()
+                            .default(false),
+                    )
+                    .col(ColumnDef::new(Plans::Hooks).json())
                     .col(
                         ColumnDef::new(Plans::Status)
                             .string()
@@ -89,7 +102,10 @@ enum Plans {
     ExcludeObjectTypes,
     ExcludeObjectNames,
     DisabledDropTypes,
+    DisableAllDrops,
     FailFast,
+    DisableHooks,
+    Hooks,
     Status,
     CreatedAt,
 }

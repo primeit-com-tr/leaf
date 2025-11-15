@@ -1,5 +1,6 @@
 use tokio::sync::mpsc;
 
+#[derive(Debug)]
 pub struct ProgressReporter(Option<mpsc::UnboundedSender<String>>);
 
 impl ProgressReporter {

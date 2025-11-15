@@ -1,27 +1,24 @@
 use crate::{
     delta::{delta::with_disabled_drop_types_excluded, find_deltas},
     entities::{
-        ChangeActiveModel, ChangeModel, ChangesetActiveModel, ChangesetModel,
-        DeploymentActiveModel, DeploymentModel, PlanModel,
+        ChangeActiveModel, ChangeModel, ChangesetActiveModel, ChangesetModel, DeploymentModel,
+        PlanModel,
     },
-    errors::{DeployError, SchemaValidationError},
+    errors::{DeployError, PlanIsNotRunnableError, SchemaValidationError},
     oracle::OracleClient,
     repo::{
         ChangeRepository, ChangesetRepository, ConnectionRepository, DeploymentRepository,
         PlanRepository, rollback_repo::RollbackRepository,
     },
-    types::{
-        ChangeStatus, Delta, DeploymentItem, DeploymentResultDetails, DeploymentResultType,
-        DeploymentStatus, DryDeployment, PlanStatus, RollbackStatus, StringList,
-    },
-    utils::ProgressReporter,
+    types::{ChangeStatus, Delta, DeploymentStatus, PlanStatus, RollbackStatus, StringList},
+    utils::{DeploymentContext, ProgressReporter},
 };
 use anyhow::{Context, Result, anyhow};
-use chrono::{NaiveDateTime, Utc};
+use chrono::NaiveDateTime;
 use sea_orm::IntoActiveModel;
 use std::sync::Arc;
 use tokio::try_join;
-use tracing::{debug, warn};
+use tracing::warn;
 
 pub struct DeploymentService {
     repo: Arc<DeploymentRepository>,
@@ -53,6 +50,23 @@ impl DeploymentService {
 
     pub async fn get_by_id(&self, id: i32) -> Result<DeploymentModel> {
         self.repo.get_by_id(id).await
+    }
+
+    async fn create_deployment(
+        &self,
+        plan: &PlanModel,
+        cutoff_date: NaiveDateTime,
+        disable_hooks: Option<bool>,
+    ) -> Result<DeploymentModel> {
+        self.repo
+            .create(
+                plan.id,
+                cutoff_date,
+                serde_json::to_string(&plan)?,
+                disable_hooks.unwrap_or(plan.disable_hooks),
+                plan.get_hooks()?.clone(),
+            )
+            .await
     }
 
     pub async fn validate_schemas(&self, client: &OracleClient, schemas: &[String]) -> Result<()> {
@@ -87,16 +101,17 @@ impl DeploymentService {
         .context("Failed to connect to Oracle database")
     }
 
-    async fn check_if_plan_is_runnable(
+    async fn validate_plan_is_runnable(
         &self,
         plan: &PlanModel,
-        progress: &ProgressReporter,
+        ctx: &mut DeploymentContext,
     ) -> Result<()> {
-        progress.report(format!("Checking if plan '{}' is runnable...", plan.name));
+        ctx.progress(format!("Checking if plan '{}' is runnable...", plan.name));
         if self.plan_repo.is_running(plan.id).await? {
-            return Err(anyhow!("Plan is already running"));
+            return Err(PlanIsNotRunnableError::PlanIsAlreadyRunning)
+                .context(format!("Plan '{}' is already running", plan.name));
         }
-        progress.report(format!(
+        ctx.progress(format!(
             "Checking if source or target connection is in use..."
         ));
         let (source_in_use, target_in_use) = try_join!(
@@ -107,47 +122,172 @@ impl DeploymentService {
         )?;
 
         if source_in_use {
-            return Err(anyhow!("Source connection is in use"));
+            return Err(PlanIsNotRunnableError::SourceConnectionInUse).context(format!(
+                "Source connection '{}' is in use",
+                plan.source_connection_id
+            ));
         }
         if target_in_use {
-            return Err(anyhow!("Target connection is in use"));
+            return Err(PlanIsNotRunnableError::TargetConnectionInUse).context(format!(
+                "Target connection '{}' is in use",
+                plan.target_connection_id
+            ));
+        }
+        Ok(())
+    }
+
+    async fn create_changesets(
+        &self,
+        deployment_model: Option<DeploymentModel>,
+        deltas: &Vec<Delta>,
+        ctx: &mut DeploymentContext,
+    ) -> Result<()> {
+        for (i, delta) in deltas.into_iter().enumerate() {
+            if delta.source_ddl == delta.target_ddl {
+                ctx.progress(format!(
+                    "Skipping changeset for {}.{} because source and target DDLs are the same",
+                    delta.object_owner, delta.object_name,
+                ));
+                continue;
+            }
+            ctx.progress(format!(
+                "Creating changeset {} of {} for '{} {}.{}'",
+                i + 1,
+                deltas.len(),
+                delta.object_type,
+                delta.object_owner,
+                delta.object_name
+            ));
+
+            let changeset: Option<ChangesetModel> = if ctx.is_dry_run() {
+                Ok(None)
+            } else {
+                let deployment_id = deployment_model.as_ref().map(|d| d.id).unwrap();
+                match self
+                    .changeset_repo
+                    .create(
+                        deployment_id,
+                        &delta.object_type,
+                        &delta.object_name,
+                        &delta.object_owner,
+                        delta.source_ddl.as_deref(),
+                        delta.target_ddl.as_deref(),
+                    )
+                    .await
+                {
+                    Ok(model) => Ok(Some(model)),
+                    Err(e) => {
+                        ctx.progress(format!("Failed to create changeset: {}", e));
+                        Err(e)
+                    }
+                }
+            }?;
+
+            let scripts = &delta.scripts;
+            let rollback_scripts = &delta.rollback_scripts;
+
+            for (script, rollback) in scripts.into_iter().zip(rollback_scripts.into_iter()) {
+                if ctx.is_dry_run() {
+                    ctx.write_script(script.as_str())?;
+                    ctx.write_rollback_script(rollback.as_str())?;
+                } else {
+                    self.change_repo
+                        .create(
+                            changeset.as_ref().unwrap().id,
+                            script.as_str(),
+                            rollback.as_str(),
+                        )
+                        .await?;
+                }
+            }
         }
         Ok(())
     }
 
     pub async fn run(
         &self,
-        plan: PlanModel,
+        plan_id: i32,
+        fail_fast: bool,
         cutoff_date: NaiveDateTime,
-        is_dry_run: Option<bool>,
-        progress: ProgressReporter,
-    ) -> Result<DeploymentResultType> {
-        let plan_id = plan.id;
+        disable_hooks: Option<bool>,
+        ctx: &mut DeploymentContext,
+    ) -> Result<Option<i32>> {
+        match self.prepare(plan_id, cutoff_date, disable_hooks, ctx).await {
+            Ok(result) => match result {
+                Some(deployment_id) => {
+                    match self
+                        .apply(deployment_id, fail_fast, disable_hooks, ctx)
+                        .await
+                    {
+                        Ok(_) => {
+                            // Success - update both statuses
+                            self.repo
+                                .set_status(deployment_id, DeploymentStatus::Success)
+                                .await?;
+                            self.plan_repo
+                                .set_status(plan_id, PlanStatus::Success)
+                                .await?;
+                            ctx.progress("✅ Deployment completed successfully");
+                            Ok(Some(deployment_id))
+                        }
+                        Err(e) => {
+                            let (count, errors) = e
+                                .downcast_ref::<DeployError>()
+                                .map(|DeployError::Errors(count, errors)| (*count, errors.clone()))
+                                .unwrap_or_else(|| (1, vec![e.to_string()]));
 
-        self.check_if_plan_is_runnable(&plan, &progress).await?;
+                            ctx.progress(format!("❌ Deployment failed with {} error(s)", count));
+                            self.plan_repo
+                                .set_status(plan_id, PlanStatus::Error)
+                                .await?;
+                            self.repo.set_error(deployment_id, &errors).await?;
+                            Err(e)
+                        }
+                    }
+                }
+                // Ifd it's a dry mode.
+                None => Ok(None),
+            },
+            Err(e) => {
+                // Failure during preparation
+                self.plan_repo
+                    .set_status(plan_id, PlanStatus::Error)
+                    .await?;
+                ctx.progress(format!("❌ Failed to prepare deployment: {}", e));
+                Err(e)
+            }
+        }
+    }
 
-        progress.report(format!("Setting plan '{}' status to RUNNING...", plan.name));
-        self.plan_repo
-            .set_status(plan_id, PlanStatus::Running)
+    pub async fn prepare(
+        &self,
+        plan_id: i32,
+        cutoff_date: NaiveDateTime,
+        disable_hooks: Option<bool>,
+        ctx: &mut DeploymentContext,
+    ) -> Result<Option<i32>> {
+        let plan = self.plan_repo.get_by_id(plan_id).await?;
+        let source_client = self.get_client(plan.source_connection_id).await?;
+        let target_client = self.get_client(plan.target_connection_id).await?;
+
+        plan.run_pre_prepare_hooks(disable_hooks, &source_client, ctx)
             .await?;
 
-        let result = async {
-            let is_dry_run = is_dry_run.unwrap_or(false);
+        let plan_id = plan.id;
 
-            let source_client = self.get_client(plan.source_connection_id).await?;
-            let target_client = self.get_client(plan.target_connection_id).await?;
+        ctx.progress(format!("Preparing deployment for plan '{}' ...", plan.name));
+
+        let result = async {
             let schemas = plan.get_schemas();
 
-            progress.report(format!("Validating schemas..."));
+            ctx.progress(format!("Validating schemas..."));
             self.validate_schemas(&source_client, &schemas).await?;
             self.validate_schemas(&target_client, &schemas).await?;
 
             let exclude_object_types = plan.get_exclude_object_types();
             let exclude_object_names = plan.get_exclude_object_names();
 
-            let start_time = Utc::now().naive_utc();
-
-            progress.report(format!("Fetching source objects..."));
+            ctx.progress(format!("Fetching source objects..."));
             let sources = source_client
                 .get_objects_with_ddls(
                     schemas.clone(),
@@ -156,70 +296,51 @@ impl DeploymentService {
                     exclude_object_names.clone(),
                 )
                 .await?;
-            progress.report(format!("Fetched {} source objects", sources.len()));
+            ctx.progress(format!("Fetched {} source objects", sources.len()));
 
-            progress.report(format!("Fetching target objects..."));
+            ctx.progress(format!("Fetching target objects..."));
+
             let targets = target_client
                 .get_objects_with_ddls(schemas, None, exclude_object_types, exclude_object_names)
                 .await?;
-            progress.report(format!("Fetched {} target objects", targets.len()));
+            ctx.progress(format!("Fetched {} target objects", targets.len()));
 
-            progress.report(format!("Finding deltas..."));
-            let deltas = find_deltas(sources, targets);
+            ctx.progress(format!("Finding deltas..."));
 
-            let disabled_drop_types = plan.disabled_drop_types.clone().map(|sl| sl.0);
-            let deltas = with_disabled_drop_types_excluded(deltas, disabled_drop_types.clone());
+            let deltas = find_deltas(sources, targets, plan.disable_all_drops);
+            let deltas = if !plan.disable_all_drops {
+                let disabled_drop_types = plan.disabled_drop_types.clone().map(|sl| sl.0);
+                with_disabled_drop_types_excluded(deltas, disabled_drop_types.clone())
+            } else {
+                deltas
+            };
 
-            if is_dry_run {
-                return Ok(DeploymentResultType::DryDeployment(DryDeployment {
-                    plan: plan.clone(),
-                    deltas,
-                }));
-            }
-
-            progress.report(format!("Creating deployment..."));
-            let deployment_model = self
-                .create_deployment(&plan, cutoff_date, start_time)
-                .await?;
-
-            let mut deployment: DeploymentActiveModel = deployment_model.into_active_model();
-            let deployment_id = deployment.id.clone().unwrap();
+            ctx.progress(format!("Creating deployment..."));
+            let deployment_model: Option<DeploymentModel> = if ctx.is_dry_run() {
+                Ok(None)
+            } else {
+                match self
+                    .create_deployment(&plan, cutoff_date, disable_hooks)
+                    .await
+                {
+                    Ok(model) => Ok(Some(model)),
+                    Err(e) => {
+                        ctx.progress(format!("Failed to create deployment: {}", e));
+                        Err(e)
+                    }
+                }
+            }?;
 
             if deltas.is_empty() {
-                progress.report(format!("No changes found for plan '{}'", plan.name));
+                ctx.progress(format!("No changes found for plan '{}'", plan.name));
                 warn!("No changes found for plan {}", plan.name);
-                deployment.end(None);
-                return Ok(DeploymentResultType::Deployment(
-                    self.repo.save_deployment(deployment).await?,
-                ));
+                return Ok(None);
             }
+            let deployment_id: Option<i32> = deployment_model.as_ref().map(|d| d.id);
+            self.create_changesets(deployment_model, &deltas, ctx)
+                .await?;
 
-            progress.report(format!("Creating changesets..."));
-            self.create_changesets(deployment_id, deltas).await?;
-
-            deployment.start();
-            let mut deployment = self
-                .repo
-                .save_deployment(deployment)
-                .await?
-                .into_active_model();
-
-            let res = self
-                .deploy_by_id(deployment_id, plan.fail_fast, progress)
-                .await;
-
-            deployment.end(
-                res.as_ref()
-                    .err()
-                    .map(|e| anyhow::Error::msg(e.to_string())),
-            );
-            if res.is_err() {
-                return Err(res.err().unwrap());
-            }
-
-            Ok(DeploymentResultType::Deployment(
-                self.repo.save_deployment(deployment).await?,
-            ))
+            Ok(deployment_id)
         }
         .await;
 
@@ -229,160 +350,151 @@ impl DeploymentService {
             PlanStatus::Error
         };
 
-        let _ = self.plan_repo.set_status(plan_id, final_status).await;
+        self.plan_repo.set_status(plan_id, final_status).await?;
+
+        plan.run_post_prepare_hooks(disable_hooks, &source_client, ctx)
+            .await?;
 
         result
     }
 
-    async fn create_deployment(
-        &self,
-        plan: &PlanModel,
-        cutoff_date: NaiveDateTime,
-        start_time: NaiveDateTime,
-    ) -> Result<DeploymentModel> {
-        self.repo
-            .create(
-                plan.id,
-                cutoff_date,
-                serde_json::to_string(&plan)?,
-                start_time,
-            )
-            .await
-    }
-
-    async fn create_changesets(&self, deployment_id: i32, deltas: Vec<Delta>) -> Result<()> {
-        for delta in deltas {
-            if delta.source_ddl == delta.target_ddl {
-                debug!(
-                    "Skipping changeset for {}.{} because source and target DDLs are the same",
-                    delta.object_owner, delta.object_name
-                );
-                continue;
-            }
-
-            let changeset = self
-                .changeset_repo
-                .create(
-                    deployment_id,
-                    &delta.object_type,
-                    &delta.object_name,
-                    &delta.object_owner,
-                    delta.source_ddl.as_deref(),
-                    delta.target_ddl.as_deref(),
-                )
-                .await?;
-
-            let scripts = delta.scripts;
-            let rollback_scripts = delta.rollback_scripts;
-
-            for (script, rollback) in scripts.into_iter().zip(rollback_scripts.into_iter()) {
-                self.change_repo
-                    .create(changeset.id, script.as_str(), rollback.as_str())
-                    .await?;
-            }
-        }
-        Ok(())
-    }
-
-    async fn deploy_by_id(
+    pub async fn apply(
         &self,
         deployment_id: i32,
         fail_fast: bool,
-        progress: ProgressReporter,
+        disable_hooks: Option<bool>,
+        ctx: &mut DeploymentContext,
     ) -> Result<()> {
-        progress.report(format!("Applying changes ..."));
+        ctx.progress(format!("Applying changes ..."));
 
         let deployment = self.repo.get_by_id(deployment_id).await?;
         let plan_id = deployment.plan_id;
 
-        let changesets_with_changes = self
-            .changeset_repo
-            .get_by_deployment_id_with_changes(deployment_id)
-            .await?;
-
-        if changesets_with_changes.is_empty() {
-            warn!("No changesets found for deployment {}", deployment_id);
-            return Ok(());
-        }
-
         let plan = self.plan_repo.get_by_id(plan_id).await?;
+        self.validate_plan_is_runnable(&plan, ctx).await?;
+
+        ctx.progress(format!("Getting target client for plan '{}'...", plan.name));
         let client = self.get_client(plan.target_connection_id).await?;
 
-        let mut errors: Vec<String> = Vec::new();
+        plan.run_pre_apply_hooks(disable_hooks, &client, ctx)
+            .await?;
 
-        for (changeset, changes) in changesets_with_changes {
-            if changes.is_empty() {
-                continue;
-            }
-
-            let object_type = changeset.object_type.clone();
-            let object_owner = changeset.object_owner.clone();
-            let object_name = changeset.object_name.clone();
-
-            let mut changeset_active: ChangesetActiveModel = changeset.into_active_model();
-            changeset_active.start();
-
-            self.changeset_repo
-                .save_changeset(&changeset_active)
+        let result = async {
+            ctx.progress(format!("Setting plan '{}' status to RUNNING...", plan.name));
+            self.plan_repo
+                .set_status(plan_id, PlanStatus::Running)
                 .await?;
 
-            let mut changeset_errors = Vec::new();
+            ctx.progress(format!(
+                "Setting deployment '{}' status to RUNNING...",
+                deployment_id
+            ));
+            self.repo
+                .set_status(deployment_id, DeploymentStatus::Running)
+                .await?;
 
-            for change in changes {
-                let change_id = change.id;
-                let script = change.script.clone();
+            ctx.progress(format!(
+                "Retrieving changesets for deployment ID('{}')...",
+                deployment_id
+            ));
+            let changesets_with_changes = self
+                .changeset_repo
+                .get_by_deployment_id_with_changes(deployment_id)
+                .await?;
 
-                let mut change_active: ChangeActiveModel = change.into_active_model();
-                change_active.start();
-
-                self.change_repo.save_change(&change_active).await?;
-
-                progress.report(format!(
-                    "Executing change for '{} {}.{}'",
-                    object_type, object_owner, object_name
+            if changesets_with_changes.is_empty() {
+                ctx.progress(format!(
+                    "No changesets found for deployment {}. Skipping deployment...",
+                    deployment_id
                 ));
-                let result = match client.execute(&script).await {
-                    Ok(_) => {
-                        change_active.end(None);
-                        Ok(())
-                    }
-                    Err(e) => {
-                        let error_msg = format!("Change {} ({}): {}", change_id, object_name, e);
+                return Ok(());
+            }
 
-                        // Update change status with error message
-                        change_active.end(Some(e.to_string()));
+            let mut errors: Vec<String> = Vec::new();
+            for (changeset, changes) in changesets_with_changes {
+                let object_type = changeset.object_type.clone();
+                let object_owner = changeset.object_owner.clone();
+                let object_name = changeset.object_name.clone();
 
-                        // Collect errors for later reporting
-                        changeset_errors.push(error_msg.clone());
-                        errors.push(error_msg);
-
-                        Err(e)
-                    }
-                };
-
-                self.change_repo.save_change(&change_active).await?;
-
-                if result.is_err() && fail_fast {
-                    return Err(DeployError::Errors(1, errors).into());
+                if changes.is_empty() {
+                    ctx.progress(format!(
+                        "Skipping changeset for '{} {}.{}' because no changes were found",
+                        object_type, object_owner, object_name
+                    ));
+                    continue;
                 }
+
+                let mut changeset_active: ChangesetActiveModel = changeset.into_active_model();
+                changeset_active.start();
+
+                self.changeset_repo
+                    .save_changeset(&changeset_active)
+                    .await?;
+
+                let mut changeset_errors = Vec::new();
+
+                for change in changes {
+                    let change_id = change.id;
+                    let script = change.script.clone();
+
+                    let mut change_active: ChangeActiveModel = change.into_active_model();
+                    change_active.start();
+
+                    self.change_repo.save_change(&change_active).await?;
+
+                    ctx.progress(format!(
+                        "Executing change for '{} {}.{}'",
+                        object_type, object_owner, object_name
+                    ));
+                    let result = match client.execute(&script).await {
+                        Ok(_) => {
+                            change_active.end(None);
+                            Ok(())
+                        }
+                        Err(e) => {
+                            let error_msg =
+                                format!("Change {} ({}): {}", change_id, object_name, e);
+
+                            // Update change status with error message
+                            change_active.end(Some(e.to_string()));
+
+                            // Collect errors for later reporting
+                            changeset_errors.push(error_msg.clone());
+                            errors.push(error_msg);
+
+                            Err(e)
+                        }
+                    };
+
+                    self.change_repo.save_change(&change_active).await?;
+
+                    if result.is_err() && fail_fast {
+                        return Err(DeployError::Errors(1, errors).into());
+                    }
+                }
+
+                if changeset_errors.is_empty() {
+                    changeset_active.end(None);
+                } else {
+                    changeset_active.end(Some(StringList(changeset_errors)));
+                }
+
+                self.changeset_repo
+                    .save_changeset(&changeset_active)
+                    .await?;
             }
 
-            if changeset_errors.is_empty() {
-                changeset_active.end(None);
-            } else {
-                changeset_active.end(Some(StringList(changeset_errors)));
+            if !errors.is_empty() {
+                return Err(DeployError::Errors(errors.len(), errors).into());
             }
-
-            self.changeset_repo
-                .save_changeset(&changeset_active)
-                .await?;
+            Ok(())
         }
+        .await;
 
-        if !errors.is_empty() {
-            return Err(DeployError::Errors(errors.len(), errors).into());
-        }
+        plan.run_post_apply_hooks(disable_hooks, &client, ctx)
+            .await?;
 
-        Ok(())
+        result
     }
 
     pub async fn find_last_deployment_by_plan_id(
@@ -397,118 +509,6 @@ impl DeploymentService {
         plan_id: i32,
     ) -> Result<Option<DeploymentModel>> {
         self.repo.find_last_successful_by_plan_id(plan_id).await
-    }
-
-    pub async fn get_deployment_details_from_result(
-        &self,
-        result: DeploymentResultType,
-    ) -> Result<DeploymentResultDetails> {
-        match result {
-            DeploymentResultType::Deployment(deployment) => {
-                let plan = self.plan_repo.get_by_id(deployment.plan_id).await?;
-                let source_connection = self
-                    .connection_repo
-                    .get_by_id(plan.source_connection_id)
-                    .await?;
-                let target_connection = self
-                    .connection_repo
-                    .get_by_id(plan.target_connection_id)
-                    .await?;
-
-                let changesets_with_changes = self
-                    .changeset_repo
-                    .get_by_deployment_id_with_changes(deployment.id)
-                    .await?;
-
-                let mut items = Vec::new();
-
-                for (changeset, changes) in changesets_with_changes {
-                    let mut item = DeploymentItem {
-                        object_type: changeset.object_type,
-                        object_name: changeset.object_name,
-                        object_owner: changeset.object_owner,
-                        source_ddl: changeset.source_ddl,
-                        target_ddl: changeset.target_ddl,
-                        scripts: Vec::new(),
-                        rollback_scripts: Vec::new(),
-                        status: Some(changeset.status),
-                        errors: changeset.errors.map(|sl| sl.into_inner()),
-                    };
-
-                    for change in changes {
-                        let script = change.script.clone();
-                        let rollback_script = change.rollback_script.clone();
-                        item.scripts.push(script);
-                        item.rollback_scripts.push(rollback_script);
-                    }
-
-                    items.push(item);
-                }
-
-                Ok(DeploymentResultDetails {
-                    is_dry_run: false,
-                    id: Some(deployment.id),
-                    plan_id: deployment.plan_id,
-                    plan_name: plan.name,
-                    source_connection_id: plan.source_connection_id,
-                    source_connection_name: source_connection.name,
-                    target_connection_id: plan.target_connection_id,
-                    target_connection_name: target_connection.name,
-                    status: Some(deployment.status),
-                    started_at: deployment.started_at,
-                    ended_at: deployment.ended_at,
-                    items,
-                })
-            }
-            DeploymentResultType::DryDeployment(dry) => {
-                let plan = self.plan_repo.get_by_id(dry.plan.id).await?;
-                let source_connection = self
-                    .connection_repo
-                    .get_by_id(plan.source_connection_id)
-                    .await?;
-                let target_connection = self
-                    .connection_repo
-                    .get_by_id(plan.target_connection_id)
-                    .await?;
-
-                let mut items = Vec::new();
-                for delta in &dry.deltas {
-                    let mut item = DeploymentItem {
-                        object_type: delta.object_type.clone(),
-                        object_name: delta.object_name.clone(),
-                        object_owner: delta.object_owner.clone(),
-                        scripts: Vec::new(),
-                        rollback_scripts: Vec::new(),
-                        ..Default::default()
-                    };
-
-                    for script in &delta.scripts {
-                        item.scripts.push(script.clone());
-                    }
-
-                    for script in &delta.rollback_scripts {
-                        item.rollback_scripts.push(script.clone());
-                    }
-
-                    items.push(item);
-                }
-
-                Ok(DeploymentResultDetails {
-                    is_dry_run: true,
-                    id: None,
-                    plan_id: dry.plan.id,
-                    plan_name: plan.name,
-                    source_connection_id: plan.source_connection_id,
-                    source_connection_name: source_connection.name,
-                    target_connection_id: plan.target_connection_id,
-                    target_connection_name: target_connection.name,
-                    status: None,
-                    started_at: None,
-                    ended_at: None,
-                    items: items,
-                })
-            }
-        }
     }
 
     pub async fn fetch_deployments(

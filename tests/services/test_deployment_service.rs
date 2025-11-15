@@ -1,7 +1,10 @@
 use anyhow::Result;
 use leaf::{
-    config::Settings, entities::DeploymentModel, oracle::OracleClient, services::AppServices,
-    types::DeploymentResultType, utils::ProgressReporter,
+    config::Settings,
+    entities::DeploymentModel,
+    oracle::OracleClient,
+    services::AppServices,
+    utils::{DeploymentContext, ProgressReporter},
 };
 use serial_test::serial;
 use tempfile::NamedTempFile;
@@ -31,8 +34,7 @@ async fn check_schema1_emp_deployed(
     services: &AppServices,
 ) -> Result<()> {
     let client = get_target_client(deployment, services).await?;
-    let query =
-        r#"SELECT column_name FROM all_tab_columns WHERE table_name = 'EMP' AND owner = 'SCHEMA1'"#;
+    let query = r#"SELECT column_name FROM all_tab_columns WHERE table_name = 'EMP' AND owner = 'SCHEMA1' ORDER BY column_name"#;
     let rows = client.conn.query(query, &[])?.into_iter();
     let cols: Vec<String> = rows
         .map(|row| row?.get(0))
@@ -48,8 +50,7 @@ async fn check_schema1_emp_rolled_back(
     services: &AppServices,
 ) -> Result<()> {
     let client = get_target_client(deployment, services).await?;
-    let query =
-        r#"SELECT column_name FROM all_tab_columns WHERE table_name = 'EMP' AND owner = 'SCHEMA1'"#;
+    let query = r#"SELECT column_name FROM all_tab_columns WHERE table_name = 'EMP' AND owner = 'SCHEMA1' ORDER BY column_name"#;
     let rows = client.conn.query(query, &[])?.into_iter();
     let cols: Vec<String> = rows
         .map(|row| row?.get(0))
@@ -66,8 +67,7 @@ async fn check_schema1_emp_columns_not_dropped(
     services: &AppServices,
 ) -> Result<()> {
     let client = get_target_client(deployment, services).await?;
-    let query =
-        r#"SELECT column_name FROM all_tab_columns WHERE table_name = 'EMP' AND owner = 'SCHEMA1'"#;
+    let query = r#"SELECT column_name FROM all_tab_columns WHERE table_name = 'EMP' AND owner = 'SCHEMA1' ORDER BY column_name"#;
     let rows = client.conn.query(query, &[])?.into_iter();
     let cols: Vec<String> = rows
         .map(|row| row?.get(0))
@@ -78,6 +78,7 @@ async fn check_schema1_emp_columns_not_dropped(
     assert_eq!(cols[1], "NAME");
     Ok(())
 }
+
 async fn check_schema1_dept(deployment: &DeploymentModel, services: &AppServices) -> Result<()> {
     let client = get_target_client(deployment, services).await?;
     let query = r#"SELECT column_name FROM all_tab_columns WHERE table_name = 'DEPT' AND owner = 'SCHEMA1'"#;
@@ -91,9 +92,6 @@ async fn check_schema1_dept(deployment: &DeploymentModel, services: &AppServices
     Ok(())
 }
 
-// source schema2 has no table named BONUS
-// target schema2 has table named BONUS
-// so we expect after deployment, target schema2 has no table named BONUS
 async fn check_schema2_bonus_exists(
     deployment: &DeploymentModel,
     services: &AppServices,
@@ -147,29 +145,33 @@ async fn test_run_deployment_single_schema() -> Result<()> {
             None,
             None,
             None,
-            false,
+            false, // disable_all_drops
+            true,  // fail_fast
+            false, // disable_hooks
+            None,
         )
         .await?;
 
     let cutoff_date = chrono::Utc::now().naive_utc() - chrono::Duration::days(1);
-    let is_dry_run = false;
 
-    let deployment = services
+    let deployment_id = services
         .deployment_service
         .run(
-            plan,
+            plan.id,
+            false,
             cutoff_date,
-            Some(is_dry_run),
-            ProgressReporter::new(None),
+            None,
+            &mut DeploymentContext::default(),
         )
         .await?;
 
-    match deployment {
-        DeploymentResultType::Deployment(deployment) => {
+    match deployment_id {
+        Some(deployment_id) => {
+            let deployment = services.deployment_service.get_by_id(deployment_id).await?;
             check_schema1_emp_deployed(&deployment, &services).await?;
             check_schema1_dept(&deployment, &services).await?;
         }
-        _ => panic!("Deployment result type is not Deployment"),
+        _ => panic!("Deployment id is not returned"),
     }
 
     Ok(())
@@ -196,30 +198,34 @@ async fn test_run_deployment() -> Result<()> {
             None,
             None,
             None,
-            false,
+            false, // disable_all_drops
+            true,  // fail_fast
+            false, // disable_hooks
+            None,
         )
         .await?;
 
     let cutoff_date = chrono::Utc::now().naive_utc() - chrono::Duration::days(1);
-    let is_dry_run = false;
 
     let deployment = services
         .deployment_service
         .run(
-            plan,
+            plan.id,
+            false,
             cutoff_date,
-            Some(is_dry_run),
-            ProgressReporter::new(None),
+            None,
+            &mut DeploymentContext::default(),
         )
         .await?;
 
     match deployment {
-        DeploymentResultType::Deployment(deployment) => {
+        Some(deployment_id) => {
+            let deployment = services.deployment_service.get_by_id(deployment_id).await?;
             check_schema1_emp_deployed(&deployment, &services).await?;
             check_schema1_dept(&deployment, &services).await?;
             check_schema2_bonus_not_exists(&deployment, &services).await?;
         }
-        _ => panic!("Deployment result type is not Deployment"),
+        _ => panic!("Deployment id is not returned"),
     }
 
     Ok(())
@@ -246,29 +252,33 @@ async fn test_run_deployment_exclude_object_types() -> Result<()> {
             Some(vec!["TABLE".to_string()]),
             None,
             None,
-            false,
+            false, // disable_all_drops
+            true,  // fail_fast
+            false, // disable_hooks
+            None,
         )
         .await?;
 
     let cutoff_date = chrono::Utc::now().naive_utc() - chrono::Duration::days(1);
-    let is_dry_run = false;
 
     let deployment = services
         .deployment_service
         .run(
-            plan,
+            plan.id,
+            false,
             cutoff_date,
-            Some(is_dry_run),
-            ProgressReporter::new(None),
+            None,
+            &mut DeploymentContext::default(),
         )
         .await?;
 
     match deployment {
-        DeploymentResultType::Deployment(deployment) => {
+        Some(deployment_id) => {
+            let deployment = services.deployment_service.get_by_id(deployment_id).await?;
             // Table type is excluded, so we expect target schema2 has table named BONUS
             check_schema2_bonus_exists(&deployment, &services).await?;
         }
-        _ => panic!("Deployment result type is not Deployment"),
+        _ => panic!("Deployment id is not returned"),
     }
 
     Ok(())
@@ -295,29 +305,33 @@ async fn test_run_deployment_exclude_object_names() -> Result<()> {
             None,
             Some(vec!["BONUS".to_string()]),
             None,
-            false,
+            false, // disable_all_drops
+            true,  // fail_fast
+            false, // disable_hooks
+            None,
         )
         .await?;
 
     let cutoff_date = chrono::Utc::now().naive_utc() - chrono::Duration::days(1);
-    let is_dry_run = false;
 
     let deployment = services
         .deployment_service
         .run(
-            plan,
+            plan.id,
+            false,
             cutoff_date,
-            Some(is_dry_run),
-            ProgressReporter::new(None),
+            None,
+            &mut DeploymentContext::default(),
         )
         .await?;
 
     match deployment {
-        DeploymentResultType::Deployment(deployment) => {
+        Some(deployment_id) => {
+            let deployment = services.deployment_service.get_by_id(deployment_id).await?;
             // Object name BONUS is excluded, so we expect target schema2 has table named BONUS
             check_schema2_bonus_exists(&deployment, &services).await?;
         }
-        _ => panic!("Deployment result type is not Deployment"),
+        _ => panic!("Deployment id is not returned"),
     }
 
     Ok(())
@@ -344,30 +358,145 @@ async fn test_run_deployment_disabled_drop_types() -> Result<()> {
             None,
             None,
             Some(vec!["TABLE".to_string(), "COLUMN".to_string()]),
-            false,
+            false, // disable_all_drops
+            true,  // fail_fast
+            false, // disable_hooks
+            None,
         )
         .await?;
 
     let cutoff_date = chrono::Utc::now().naive_utc() - chrono::Duration::days(1);
-    let is_dry_run = false;
 
     let deployment = services
         .deployment_service
         .run(
-            plan,
+            plan.id,
+            false,
             cutoff_date,
-            Some(is_dry_run),
-            ProgressReporter::new(None),
+            None,
+            &mut DeploymentContext::default(),
         )
         .await?;
 
     match deployment {
-        DeploymentResultType::Deployment(deployment) => {
+        Some(deployment_id) => {
+            let deployment = services.deployment_service.get_by_id(deployment_id).await?;
             // drop TABLE is disabled, so we expect target schema2 has table named BONUS
             check_schema2_bonus_exists(&deployment, &services).await?;
+            // drop COLUMN is disabled, so we expect SCHEMA1.EMP still has NAME column
             check_schema1_emp_columns_not_dropped(&deployment, &services).await?;
         }
-        _ => panic!("Deployment result type is not Deployment"),
+        _ => panic!("Deployment id is not returned"),
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+#[serial(oracle)]
+async fn test_run_deployment_with_disable_all_drops() -> Result<()> {
+    let file = NamedTempFile::new()?;
+    let mut settings = Settings::new()?;
+    settings.database.url = "sqlite://".to_string() + file.path().to_str().unwrap();
+
+    init_plan_test(&settings).await?;
+
+    let services = AppServices::new(&settings).await?;
+
+    let plan = services
+        .plan_service
+        .create(
+            "test",
+            "source",
+            "target",
+            &["SCHEMA1".to_string(), "SCHEMA2".to_string()],
+            None,
+            None,
+            None,
+            true,  // disable_all_drops
+            true,  // fail_fast
+            false, // disable_hooks
+            None,
+        )
+        .await?;
+
+    let cutoff_date = chrono::Utc::now().naive_utc() - chrono::Duration::days(1);
+
+    let deployment = services
+        .deployment_service
+        .run(
+            plan.id,
+            false,
+            cutoff_date,
+            None,
+            &mut DeploymentContext::default(),
+        )
+        .await?;
+
+    match deployment {
+        Some(deployment_id) => {
+            let deployment = services.deployment_service.get_by_id(deployment_id).await?;
+            // disable_all_drops means no table drops, so BONUS should still exist
+            check_schema2_bonus_exists(&deployment, &services).await?;
+            // disable_all_drops also filters DROP COLUMN, so NAME should still exist
+            check_schema1_emp_columns_not_dropped(&deployment, &services).await?;
+        }
+        _ => panic!("Deployment id is not returned"),
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+#[serial(oracle)]
+async fn test_run_deployment_disable_all_drops_vs_disabled_drop_types() -> Result<()> {
+    let file = NamedTempFile::new()?;
+    let mut settings = Settings::new()?;
+    settings.database.url = "sqlite://".to_string() + file.path().to_str().unwrap();
+
+    init_plan_test(&settings).await?;
+
+    let services = AppServices::new(&settings).await?;
+
+    // Test 1: disable_all_drops = true should behave the same as disabled_drop_types = [COLUMN]
+    // but also skip target object processing (no DROP TABLE operations)
+    let plan1 = services
+        .plan_service
+        .create(
+            "test_disable_all",
+            "source",
+            "target",
+            &["SCHEMA1".to_string(), "SCHEMA2".to_string()],
+            None,
+            None,
+            None,
+            true,  // disable_all_drops
+            true,  // fail_fast
+            false, // disable_hooks
+            None,
+        )
+        .await?;
+
+    let cutoff_date = chrono::Utc::now().naive_utc() - chrono::Duration::days(1);
+
+    let deployment1 = services
+        .deployment_service
+        .run(
+            plan1.id,
+            false,
+            cutoff_date,
+            None,
+            &mut DeploymentContext::default(),
+        )
+        .await?;
+
+    if let Some(deployment_id) = deployment1 {
+        let deployment = services.deployment_service.get_by_id(deployment_id).await?;
+        // Both TABLE and COLUMN drops should be disabled
+        check_schema2_bonus_exists(&deployment, &services).await?;
+        check_schema1_emp_columns_not_dropped(&deployment, &services).await?;
+    } else {
+        panic!("Deployment id is not returned");
     }
 
     Ok(())
@@ -394,29 +523,33 @@ async fn test_rollback_deployment() -> Result<()> {
             None,
             None,
             None,
-            false,
+            false, // disable_all_drops
+            true,  // fail_fast
+            false, // disable_hooks
+            None,
         )
         .await?;
 
     let plan_id = plan.id.clone();
     let cutoff_date = chrono::Utc::now().naive_utc() - chrono::Duration::days(1);
-    let is_dry_run = false;
 
     let result = services
         .deployment_service
         .run(
-            plan,
+            plan_id,
+            false,
             cutoff_date,
-            Some(is_dry_run),
-            ProgressReporter::new(None),
+            None,
+            &mut DeploymentContext::default(),
         )
         .await?;
 
     match result {
-        DeploymentResultType::Deployment(deployment) => {
+        Some(deployment_id) => {
+            let deployment = services.deployment_service.get_by_id(deployment_id).await?;
             check_schema1_emp_deployed(&deployment, &services).await?;
         }
-        _ => panic!("Deployment result type is not Deployment"),
+        _ => panic!("Deployment id is not returned"),
     }
 
     services

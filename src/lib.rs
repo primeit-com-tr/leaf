@@ -4,6 +4,7 @@ pub mod db;
 pub mod delta;
 pub mod entities;
 pub mod errors;
+pub mod hooks;
 pub mod oracle;
 pub mod repo;
 pub mod services;

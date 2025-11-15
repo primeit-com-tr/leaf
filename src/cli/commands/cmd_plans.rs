@@ -8,9 +8,15 @@ use tokio::sync::mpsc;
 use tracing::error;
 
 use crate::{
-    cli::{Context, commands::ExitOnErr},
-    types::PlanStatus,
-    utils::{ProgressReporter, parsers::parse_cutoff_date},
+    cli::{
+        Context,
+        commands::{ExitOnErr, get_cut_off_date_or_bail, new_spinner},
+    },
+    types::{Hooks, PlanStatus},
+    utils::{
+        DeploymentContext, ProgressReporter, deployment_context::DeploymentContextOptions,
+        parsers::parse_cutoff_date,
+    },
 };
 use tabled::{settings::Alignment, settings::Modify, settings::Style, settings::object::Rows};
 
@@ -35,12 +41,15 @@ pub struct PlansRunArgs {
     fail_fast: Option<bool>,
 
     /// Dry run mode, this will not apply changes to the database
-    #[arg(short, long)]
+    #[arg(long)]
     dry: bool,
 
     /// Show report after running the plan
-    #[arg(short, long, default_value_t = false)]
+    #[arg(long, default_value_t = false)]
     show_report: bool,
+
+    #[arg( long, default_value = None)]
+    disable_hooks: Option<bool>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -110,9 +119,17 @@ pub enum PlanCommands {
         #[arg(long, value_delimiter = ',')]
         disabled_drop_types: Vec<String>,
 
+        /// Disable all DROP operations
+        #[arg(long, default_value = None)]
+        disable_all_drops: Option<bool>,
+
         /// Fail fast mode
         #[arg(long)]
         fail_fast: bool,
+
+        /// Disable hooks
+        #[arg(long, default_value_t = false)]
+        disable_hooks: bool,
     },
     /// List plans, schemas, excluded object types
     List(ListCommand),
@@ -179,7 +196,9 @@ pub async fn execute(action: &PlanCommands, ctx: &Context<'_>) {
             exclude_object_types,
             exclude_object_names,
             disabled_drop_types,
+            disable_all_drops,
             fail_fast,
+            disable_hooks,
         } => {
             add(
                 name,
@@ -189,7 +208,9 @@ pub async fn execute(action: &PlanCommands, ctx: &Context<'_>) {
                 exclude_object_types,
                 exclude_object_names,
                 disabled_drop_types,
+                *disable_all_drops,
                 *fail_fast,
+                *disable_hooks,
                 ctx,
             )
             .await
@@ -218,6 +239,7 @@ pub async fn execute(action: &PlanCommands, ctx: &Context<'_>) {
                 &args.dry,
                 args.cutoff_date,
                 args.fail_fast,
+                args.disable_hooks,
                 args.show_report,
                 ctx,
             )
@@ -236,7 +258,9 @@ pub async fn add(
     exclude_object_types: &Vec<String>,
     exclude_object_names: &Vec<String>,
     excluded_drop_types: &Vec<String>,
+    disable_all_drops: Option<bool>,
     fail_fast: bool,
+    disable_hooks: bool,
     ctx: &Context<'_>,
 ) {
     ctx.services
@@ -249,7 +273,10 @@ pub async fn add(
             Some(exclude_object_types.to_vec()),
             Some(exclude_object_names.to_vec()),
             Some(excluded_drop_types.to_vec()),
+            disable_all_drops.unwrap_or(ctx.settings.rules.disable_all_drops),
             fail_fast,
+            disable_hooks,
+            Some(Hooks::from_config(ctx.settings.hooks.clone())),
         )
         .await
         .exit_on_err(&format!("❌ Plan creation failed for '{}'", name));
@@ -397,100 +424,60 @@ pub async fn run(
     dry: &bool,
     cutoff_date: Option<NaiveDateTime>,
     fail_fast: Option<bool>,
+    disable_hooks: Option<bool>,
     show_report: bool,
     ctx: &Context<'_>,
 ) {
-    let spinner = ProgressBar::new_spinner();
-    spinner.set_style(
-        ProgressStyle::default_spinner()
-            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
-            .template("{spinner:.cyan} [{elapsed_precise}] {msg}")
-            .unwrap(),
-    );
-    spinner.enable_steady_tick(std::time::Duration::from_millis(80));
-    spinner.set_message(format!("Running plan '{}'...", name));
+    let (spinner, tx) = new_spinner();
 
-    let (tx, mut rx) = mpsc::unbounded_channel();
-    let progress = ProgressReporter::new(Some(tx));
-
-    let spinner_clone = spinner.clone();
-    tokio::spawn(async move {
-        while let Some(msg) = rx.recv().await {
-            spinner_clone.set_message(msg);
-        }
-    });
-
-    let mut plan = ctx
+    let plan = ctx
         .services
         .plan_service
         .find_by_name(name)
         .await
-        .unwrap_or_else(|e| {
-            eprintln!("❌ Failed to find plan '{}': {}", name, e);
-            std::process::exit(1);
-        })
+        .exit_on_err(format!("❌ Failed to find plan '{}'", name).as_str())
         .unwrap_or_else(|| {
             eprintln!("❌ Plan '{}' not found", name);
             std::process::exit(1);
         });
 
-    if let Some(fail_fast) = fail_fast {
-        plan.fail_fast = fail_fast;
-    }
+    let cutoff_date = get_cut_off_date_or_bail(cutoff_date, plan.id, ctx).await;
 
-    let cutoff_date = if let Some(date) = cutoff_date {
-        Some(date)
-    } else {
-        println!("⚠️ No cutoff date provided, using the last deployment start date");
-        let last_deployment = ctx
-            .services
-            .deployment_service
-            .find_last_successful_deployment_by_plan_id(plan.id)
-            .await
-            .unwrap_or_else(|e| {
-                eprintln!(
-                    "❌ Failed to find last deployment for plan '{}': {}",
-                    plan.name, e
-                );
-                std::process::exit(1);
-            })
-            .unwrap_or_else(|| {
-                eprintln!("❌ No deployments found for plan '{}'", plan.name);
-                std::process::exit(1);
-            });
-        last_deployment.started_at
-    }
-    .unwrap_or_else(|| {
-        eprintln!(
-            "❌ Failed to determine deployment cutoff date for plan '{}'",
-            plan.name
-        );
-        std::process::exit(1);
-    });
+    let mut dctx = DeploymentContext::new(Some(DeploymentContextOptions::new(
+        *dry,
+        false,
+        None,
+        None,
+        Some(tx),
+    )))
+    .exit_on_err("Failed to initialize deployment sink"); // TODO: Add more info
 
     let res = ctx
         .services
         .deployment_service
-        .run(plan, cutoff_date, Some(*dry), progress)
+        .run(
+            plan.id,
+            fail_fast.unwrap_or(false),
+            cutoff_date,
+            disable_hooks,
+            &mut dctx,
+        )
         .await;
 
     if res.is_err() {
         error!("Failed to run plan: {:?}", res.as_ref().err());
         std::process::exit(1);
     }
+
+    if dctx.is_dry_run() {
+        dctx.print_summary("✅ Dry run completed successfully");
+    }
+
     spinner.finish_and_clear();
 
     if show_report {
-        let res = res.unwrap();
-        let details = ctx
-            .services
-            .deployment_service
-            .get_deployment_details_from_result(res)
-            .await
-            .exit_on_err("Failed to get deployment result details");
-
-        println!("{}", "=== Deployment Result ===".blue());
-        println!("{}", details);
+        let _ = res.unwrap();
+        todo!();
     } else {
         println!("✅ Deployment for plan '{}' completed successfully", name);
     }

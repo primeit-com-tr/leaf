@@ -1,10 +1,6 @@
 use crate::{
-    entities::{
-        ChangeColumn, ChangeModel, ChangesEntity, ChangesetColumn, ChangesetModel,
-        ChangesetsEntity, DeploymentActiveModel, DeploymentColumn, DeploymentModel,
-        DeploymentsEntity, RollbackModel,
-    },
-    types::DeploymentStatus,
+    entities::{DeploymentActiveModel, DeploymentColumn, DeploymentModel, DeploymentsEntity},
+    types::{DeploymentStatus, Hooks, StringList},
 };
 use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
@@ -130,14 +126,16 @@ impl DeploymentRepository {
         plan_id: i32,
         cutoff_date: NaiveDateTime,
         payload: String,
-        started_at: NaiveDateTime,
+        disable_hooks: bool,
+        hooks: Option<Hooks>,
     ) -> Result<DeploymentModel> {
         let active_model = DeploymentActiveModel {
             id: NotSet,
             plan_id: Set(plan_id),
             cutoff_date: Set(cutoff_date),
             payload: Set(payload),
-            started_at: Set(Some(started_at)),
+            disable_hooks: Set(disable_hooks),
+            hooks: Set(hooks.map(|h| serde_json::to_value(h)).transpose()?),
             ..Default::default()
         };
         let saved = active_model.save(&self.db).await?;
@@ -150,6 +148,26 @@ impl DeploymentRepository {
     ) -> Result<DeploymentModel> {
         let model = deployment.save(&self.db).await?;
         Ok(model.try_into()?)
+    }
+
+    pub async fn set_error(&self, id: i32, errors: &Vec<String>) -> Result<DeploymentModel> {
+        let deployment = self
+            .get_by_id(id)
+            .await
+            .context(format!("Deployment with ID {} not found", id))?;
+
+        let mut active: DeploymentActiveModel = deployment.into();
+        active.set_status(DeploymentStatus::Error);
+        active.errors = Set(Some(StringList(errors.to_vec())));
+
+        active
+            .update(&self.db)
+            .await
+            .context(format!("Failed to update status for deployment {}", id))?;
+
+        self.get_by_id(id)
+            .await
+            .context("Deployment was updated but could not be retrieved")
     }
 
     pub async fn set_status(&self, id: i32, status: DeploymentStatus) -> Result<DeploymentModel> {

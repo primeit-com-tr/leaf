@@ -1,5 +1,7 @@
+use chrono::NaiveDateTime;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
+use std::path::PathBuf;
 use tabled::{
     Table, Tabled,
     settings::{
@@ -10,8 +12,15 @@ use tabled::{
 use terminal_size::{Width as TermWidth, terminal_size};
 
 use crate::{
-    cli::{Context, commands::ExitOnErr},
-    utils::format_duration,
+    cli::{
+        Context,
+        commands::{ExitOnErr, new_spinner, shared::get_cut_off_date_or_bail},
+    },
+    types::DeploymentStatus,
+    utils::{
+        DeploymentContext, DeploymentContextOptions, format_duration, parsers::parse_cutoff_date,
+        validate_dir,
+    },
 };
 
 #[derive(Subcommand, Debug)]
@@ -54,7 +63,46 @@ pub enum DeploymentCommands {
         #[arg(short, default_value = "desc")]
         order: Option<String>,
     },
+
+    /// Show a deployment
     Show(ShowCommand),
+
+    /// Prepare a deployment
+    Prepare {
+        #[arg(long, required = true)]
+        plan: String,
+
+        #[arg(long, required = false, value_parser = parse_cutoff_date)]
+        cutoff_date: Option<NaiveDateTime>,
+
+        #[arg(long, required = false)]
+        dry: bool,
+
+        #[arg(long, required = false)]
+        collect_scripts: bool,
+
+        #[arg(long, value_name = "DIR", value_parser = validate_dir)]
+        output_path: Option<PathBuf>,
+
+        /// Disable pre-prepare-deployment and post-prepare-deployment hooks
+        #[arg(long, default_value = None)]
+        disable_hooks: Option<bool>,
+    },
+
+    /// Applies a prepared deployment.
+    Apply {
+        /// Deployment ID to apply
+        #[arg(long, required = true)]
+        deployment_id: i32,
+
+        /// Fail fast mode
+        #[arg(long, required = false)]
+        fail_fast: bool,
+
+        /// Disable pre-apply-deployment and post-apply-deployment hooks
+        #[arg(long, default_value = None)]
+        disable_hooks: Option<bool>,
+    },
 }
 
 #[derive(Tabled)]
@@ -166,6 +214,31 @@ pub async fn execute(action: &DeploymentCommands, ctx: &Context<'_>) {
             },
             None => show_deployment(0, ctx).await, // default behavior when no subcommand is given
         },
+        DeploymentCommands::Prepare {
+            plan,
+            cutoff_date,
+            dry,
+            collect_scripts,
+            output_path,
+            disable_hooks,
+        } => {
+            prepare_deployment(
+                plan,
+                cutoff_date,
+                *dry,
+                *collect_scripts,
+                output_path,
+                *disable_hooks,
+                ctx,
+            )
+            .await
+        }
+
+        DeploymentCommands::Apply {
+            deployment_id,
+            fail_fast,
+            disable_hooks,
+        } => apply_deployment(*deployment_id, *fail_fast, *disable_hooks, ctx).await,
     }
 }
 
@@ -367,6 +440,7 @@ async fn show_deployment_objects(deployment_id: i32, ctx: &Context<'_>) {
         .to_string();
     println!("{}", table);
 }
+
 async fn show_deployment_changes(deployment_id: i32, ctx: &Context<'_>) {
     let changesets_with_changes = ctx
         .services
@@ -543,4 +617,135 @@ async fn list_deployments(
         .to_string();
 
     println!("{}", table);
+}
+
+async fn prepare_deployment(
+    plan_name: &str,
+    cutoff_date: &Option<NaiveDateTime>,
+    dry: bool,
+    collect_scripts: bool,
+    output_path: &Option<PathBuf>,
+    disable_hooks: Option<bool>,
+    ctx: &Context<'_>,
+) {
+    let (spinner, tx) = new_spinner();
+
+    let mut dctx = DeploymentContext::new(Some(DeploymentContextOptions::new(
+        dry,
+        collect_scripts,
+        output_path.clone(),
+        None,
+        Some(tx),
+    )))
+    .exit_on_err("Failed to initialize deployment sink"); // TODO: Add more info
+
+    let plan = ctx
+        .services
+        .plan_service
+        .find_by_name(plan_name)
+        .await
+        .exit_on_err(format!("❌ Failed to find plan '{}'", plan_name).as_str())
+        .unwrap_or_else(|| {
+            eprintln!("❌ Plan '{}' not found", plan_name);
+            std::process::exit(1);
+        });
+
+    let cutoff_date = get_cut_off_date_or_bail(cutoff_date.clone(), plan.id, ctx).await;
+
+    let res = ctx
+        .services
+        .deployment_service
+        .prepare(plan.id, cutoff_date, disable_hooks, &mut dctx)
+        .await;
+
+    spinner.finish_and_clear();
+
+    if res.is_err() {
+        eprintln!("❌ Deployment for plan '{}' failed", plan_name);
+        std::process::exit(1);
+    }
+    match res.unwrap() {
+        Some(deployment_id) => {
+            println!(
+                "✅ Deployment prepared for plan '{}' completed successfully",
+                plan_name
+            );
+            println!("🗝️ Deployment ID: {}", deployment_id);
+        }
+        None => {}
+    }
+
+    if dctx.is_collect_scripts() {
+        dctx.print_summary("✅ Collected scripts successfully");
+    }
+
+    println!(
+        "✅ Deployment preparation for plan '{}' completed successfully{}",
+        plan_name,
+        if dry { " in dry-run mode 👻." } else { "." }
+    );
+}
+
+async fn apply_deployment(
+    deployment_id: i32,
+    fail_fast: bool,
+    disable_hooks: Option<bool>,
+    ctx: &Context<'_>,
+) {
+    let (spinner, tx) = new_spinner();
+
+    let mut dctx = DeploymentContext::new(Some(DeploymentContextOptions::new(
+        false,
+        false,
+        None,
+        None,
+        Some(tx),
+    )))
+    .exit_on_err("Failed to initialize deployment sink"); // TODO: Add more info
+
+    dctx.progress(format!("Finding deployment by ID '{}'...", deployment_id));
+    let deployment = ctx
+        .services
+        .deployment_service
+        .get_by_id(deployment_id)
+        .await
+        .exit_on_err(format!("❌ Failed to find deployment by id {}", deployment_id).as_str());
+
+    dctx.progress(format!(
+        "Checking deployment status '{}'...",
+        deployment.plan_id
+    ));
+    if deployment.status != DeploymentStatus::Idle {
+        spinner.finish_and_clear();
+        eprintln!(
+            "❌ Deployment with ID '{}' is not in IDLE status. It can not be applied.",
+            deployment_id
+        );
+        std::process::exit(1);
+    }
+
+    let plan = ctx
+        .services
+        .plan_service
+        .get_by_id(deployment.plan_id)
+        .await
+        .exit_on_err(format!("❌ Failed to find plan by id {}", deployment.plan_id).as_str());
+
+    let res = ctx
+        .services
+        .deployment_service
+        .apply(deployment_id, fail_fast, disable_hooks, &mut dctx)
+        .await;
+
+    spinner.finish_and_clear();
+
+    if res.is_err() {
+        eprintln!("❌ Deployment for plan '{}' failed", plan.name);
+        std::process::exit(1);
+    }
+
+    println!(
+        "🚀 Deployment for plan '{}' completed successfully.",
+        plan.name
+    );
 }

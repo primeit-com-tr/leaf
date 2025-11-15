@@ -1,7 +1,7 @@
 use config::{Config, ConfigError, Environment};
 use serde::{Deserialize, Serialize};
 
-use crate::config::{DatabaseConfig, LogConfig, RulesConfig};
+use crate::config::{DatabaseConfig, HooksConfig, LogConfig, RulesConfig};
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Settings {
@@ -13,6 +13,9 @@ pub struct Settings {
 
     #[serde(default)]
     pub rules: RulesConfig,
+
+    #[serde(default)]
+    pub hooks: HooksConfig,
 }
 
 fn get_env_file_name() -> String {
