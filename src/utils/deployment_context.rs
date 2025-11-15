@@ -241,7 +241,7 @@ mod tests {
             dry: true,
             collect_scripts: false,
             output_path: None,
-            script_sep: Some(";\n".to_string()),
+            script_sep: None,
             progress_tx: None,
         };
 
@@ -261,7 +261,7 @@ mod tests {
             dry: true,
             collect_scripts: false,
             output_path: None,
-            script_sep: Some(";\n".to_string()),
+            script_sep: None,
             progress_tx: None,
         };
 

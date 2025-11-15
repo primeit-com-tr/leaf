@@ -36,6 +36,9 @@ pub struct Model {
     pub disabled_drop_types: Option<StringList>,
 
     #[sea_orm(column_type = "Integer")]
+    pub disable_all_drops: bool,
+
+    #[sea_orm(column_type = "Integer")]
     pub fail_fast: bool,
 
     #[sea_orm(column_type = "Integer")]

@@ -306,10 +306,14 @@ impl DeploymentService {
             ctx.progress(format!("Fetched {} target objects", targets.len()));
 
             ctx.progress(format!("Finding deltas..."));
-            let deltas = find_deltas(sources, targets);
 
-            let disabled_drop_types = plan.disabled_drop_types.clone().map(|sl| sl.0);
-            let deltas = with_disabled_drop_types_excluded(deltas, disabled_drop_types.clone());
+            let deltas = find_deltas(sources, targets, plan.disable_all_drops);
+            let deltas = if !plan.disable_all_drops {
+                let disabled_drop_types = plan.disabled_drop_types.clone().map(|sl| sl.0);
+                with_disabled_drop_types_excluded(deltas, disabled_drop_types.clone())
+            } else {
+                deltas
+            };
 
             ctx.progress(format!("Creating deployment..."));
             let deployment_model: Option<DeploymentModel> = if ctx.is_dry_run() {

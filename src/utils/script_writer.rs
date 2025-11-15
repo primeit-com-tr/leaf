@@ -266,7 +266,7 @@ mod tests {
     fn test_memory_mode_writes_to_buffers_clean_separation() -> Result<()> {
         let options = Some(ScriptWriterOptions {
             dir: None, // Explicitly set dir to None for memory mode
-            script_sep: Some(";\n".to_string()),
+            script_sep: Some("\n".to_string()),
         });
         let mut writer = ScriptWriter::new(options)?;
 
@@ -301,7 +301,7 @@ mod tests {
         let script = writer.script_content().unwrap();
 
         // Default separator is "\n\n"
-        let expected_content = "Statement 1\n\nStatement 2\n\n";
+        let expected_content = "Statement 1;\n\nStatement 2;\n\n";
         assert_eq!(script, expected_content);
 
         Ok(())

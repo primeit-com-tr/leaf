@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use crate::{
-    config::hooks,
     entities::plan::Model as PlanModel,
     repo::{ConnectionRepository, DeploymentRepository, plan_repo::PlanRepository},
     types::{Hooks, PlanStatus, StringList},
@@ -39,6 +38,7 @@ impl PlanService {
         exclude_object_types: Option<Vec<String>>,
         exclude_object_names: Option<Vec<String>>,
         disabled_drop_types: Option<Vec<String>>,
+        disable_all_drops: bool,
         fail_fast: bool,
         disable_hooks: bool,
         hooks: Option<Hooks>,
@@ -81,6 +81,7 @@ impl PlanService {
                 exclude_object_types.map(StringList),
                 exclude_object_names.map(StringList),
                 disabled_drop_types.map(StringList),
+                disable_all_drops,
                 fail_fast,
                 disable_hooks,
                 hooks,

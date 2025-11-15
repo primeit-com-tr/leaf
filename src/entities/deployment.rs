@@ -2,14 +2,8 @@ use anyhow::{Error, Result};
 use chrono::Utc;
 use sea_orm::{ActiveValue::Set, JsonValue, entity::prelude::*};
 use serde::{Deserialize, Serialize};
-use tera::Context as TeraContext;
 
-use crate::{
-    hooks::{HookRunner, HookRunnerContext},
-    oracle::OracleClient,
-    types::{DeploymentStatus, Hooks, StringList},
-    utils::DeploymentContext,
-};
+use crate::types::{DeploymentStatus, Hooks, StringList};
 use sea_orm::ActiveModelBehavior;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, DeriveEntityModel)]

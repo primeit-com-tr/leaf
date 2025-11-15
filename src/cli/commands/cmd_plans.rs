@@ -119,6 +119,10 @@ pub enum PlanCommands {
         #[arg(long, value_delimiter = ',')]
         disabled_drop_types: Vec<String>,
 
+        /// Disable all DROP operations
+        #[arg(long, default_value = None)]
+        disable_all_drops: Option<bool>,
+
         /// Fail fast mode
         #[arg(long)]
         fail_fast: bool,
@@ -192,6 +196,7 @@ pub async fn execute(action: &PlanCommands, ctx: &Context<'_>) {
             exclude_object_types,
             exclude_object_names,
             disabled_drop_types,
+            disable_all_drops,
             fail_fast,
             disable_hooks,
         } => {
@@ -203,6 +208,7 @@ pub async fn execute(action: &PlanCommands, ctx: &Context<'_>) {
                 exclude_object_types,
                 exclude_object_names,
                 disabled_drop_types,
+                *disable_all_drops,
                 *fail_fast,
                 *disable_hooks,
                 ctx,
@@ -252,6 +258,7 @@ pub async fn add(
     exclude_object_types: &Vec<String>,
     exclude_object_names: &Vec<String>,
     excluded_drop_types: &Vec<String>,
+    disable_all_drops: Option<bool>,
     fail_fast: bool,
     disable_hooks: bool,
     ctx: &Context<'_>,
@@ -266,6 +273,7 @@ pub async fn add(
             Some(exclude_object_types.to_vec()),
             Some(exclude_object_names.to_vec()),
             Some(excluded_drop_types.to_vec()),
+            disable_all_drops.unwrap_or(ctx.settings.rules.disable_all_drops),
             fail_fast,
             disable_hooks,
             Some(Hooks::from_config(ctx.settings.hooks.clone())),
