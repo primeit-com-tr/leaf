@@ -135,6 +135,7 @@ DATABASE_URL=sqlite://leaf.db?mode=rwc
 # Supported databases are: Mysql, Postgres, SQLite
 LEAF__DATABASE__URL=sqlite://leaf.db?mode=rwc
 
+
 # === Logging configuration ===
 
 # Supported values: info, debug, error, trace, warn (default: info)
@@ -149,6 +150,10 @@ LEAF__DATABASE__URL=sqlite://leaf.db?mode=rwc
 # Enable file logging (default: true)
 # LEAF__LOGS__FILE_ENABLED=true
 
+# Set external module log level (default: info)
+# To set multiple levels, use comma-separated list (e.g., sqlx:error,hyper:info)
+# LEAF__LOGS__EXT_LEVEL=sqlx:error
+
 # === Rules configuration ===
 
 # Exclude object types from the plan.
@@ -160,6 +165,7 @@ LEAF__DATABASE__URL=sqlite://leaf.db?mode=rwc
 # - JAVA SOURCE
 # - JOB
 # - LIBRARY
+# - SCHEDULE
 # - SCHEDULE
 # - SYNONYM
 # - TABLE PARTITION
@@ -176,12 +182,58 @@ LEAF__DATABASE__URL=sqlite://leaf.db?mode=rwc
 # Following values will be combined with the values given during plan creation.
 # The default list is empty.
 # LEAF__RULES__DISABLED_DROP_TYPES=
+
+# Disable all DROP operations (default: false)
+# LEAF__RULES__DISABLE_ALL_DROPS=true
+
+
+# === Hooks configuration ===
+
+# Hooks are list of scripts that will be executed before/after certain operations.
+# Hooks can be jinja templates. and app passes [plan] currently as plan name.
+
+# Pre-prepare-deployment hooks
+# eg. LEAF__HOOKS__PRE_PREPARE_DEPLOYMENT="
+# begin system.kill_processes('{{ plan }}'); end;
+# begin system.lock_users(); end;
+# "
+# This will call system.kill_processes(plan) and system.lock_users() before deployment.
+# Note that you don't have pass the plan name as a parameter, but it will be passed as a context.
+# This way you can create plsql procedures that will be called by hooks.
+# LEAF__HOOKS__PRE_PREPARE_DEPLOYMENT=
+
+# Post-prepare-deployment hooks
+# LEAF__HOOKS__POST_PREPARE_DEPLOYMENT=
+
+# Pre-apply-deployment hooks
+# LEAF__HOOKS__PRE_APPLY_DEPLOYMENT=
+
+# Post-apply-deployment hooks
+# LEAF__HOOKS__POST_APPLY_DEPLOYMENT=
+
+# Pre-rollback hooks
+# LEAF__HOOKS__PRE_ROLLBACK=
+
+# Post-rollback hooks
+# LEAF__HOOKS__POST_ROLLBACK=
 ```
 
 Also `leaf init` will create the application database in the `sqlite` default database (file `leaf.db` in the current directory).
 If you want to use a different database, you can set the `LEAF__DATABASE__URL` and `DATABASE_URL` environment variables.
 And run `leaf init db` to create application tables in given database.
 
+
+For arguments accepting multiple values like `LEAF__RULES__EXCLUDE_OBJECT_TYPES` and `LEAF__RULES__DISABLED_DROP_TYPES`,...
+you can pass multiple values by using the following syntax:
+
+```bash
+# Arguments with multiple values
+LEAF__RULES__EXCLUDE_OBJECT_TYPES="
+TYPE_A
+TYPE_B
+TYPE_C
+"
+```
 
 ## Concepts
 
@@ -280,14 +332,14 @@ To add a plan, use the `plans add` command:
 > Before adding a plan, you need to create related connections first.
 
 ```bash
-# ❯ leaf plans add --help
+❯ leaf plans add --help
 Add a plan
 
 Usage: leaf plans add [OPTIONS] --name <NAME> --source <SOURCE> --target <TARGET> --schemas <SCHEMAS>
 
 Options:
       --name <NAME>
-          Name of the plan, unique, case insensitive
+          Name of the plan
       --source <SOURCE>
           Source connection name
       --target <TARGET>
@@ -300,8 +352,12 @@ Options:
           Comma-separated list of object names to exclude from the plan
       --disabled-drop-types <DISABLED_DROP_TYPES>
           Comma-separated list of disabled object types do drop (e.g., TABLE, VIEW, PROCEDURE, FUNCTION, TRIGGER, etc.)
+      --disable-all-drops <DISABLE_ALL_DROPS>
+          Disable all DROP operations [possible values: true, false]
       --fail-fast
           Fail fast mode
+      --disable-hooks
+          Disable hooks
   -h, --help
           Print help
 ```
