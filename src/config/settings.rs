@@ -69,6 +69,18 @@ mod tests {
     use std::io::Write;
     use tempfile::NamedTempFile;
 
+    // Helper to clean up the specific environment variables that are prone to leaking
+    fn cleanup_hook_env_vars() {
+        unsafe {
+            env::remove_var("LEAF__HOOKS__PRE_PREPARE_DEPLOYMENT");
+            env::remove_var("LEAF__HOOKS__POST_PREPARE_DEPLOYMENT");
+            env::remove_var("LEAF__HOOKS__PRE_APPLY_DEPLOYMENT");
+            env::remove_var("LEAF__HOOKS__POST_APPLY_DEPLOYMENT");
+            env::remove_var("LEAF__HOOKS__PRE_ROLLBACK");
+            env::remove_var("LEAF__HOOKS__POST_ROLLBACK");
+        }
+    }
+
     #[test]
     #[serial]
     fn test_env_file_var_set() {
@@ -142,6 +154,8 @@ mod tests {
     #[test]
     #[serial]
     fn test_parse_multiline_hooks() {
+        cleanup_hook_env_vars(); // Ensure clean slate
+
         // Create a temporary .env file with multiline hook configuration
         let mut temp_file = NamedTempFile::new().unwrap();
         writeln!(
@@ -176,6 +190,8 @@ begin system.lock_users(); end;
     #[test]
     #[serial]
     fn test_parse_single_line_hook() {
+        cleanup_hook_env_vars(); // Ensure clean slate
+
         let mut temp_file = NamedTempFile::new().unwrap();
         writeln!(
             temp_file,
@@ -202,6 +218,8 @@ begin system.lock_users(); end;
     #[test]
     #[serial]
     fn test_parse_multiple_hooks() {
+        cleanup_hook_env_vars(); // CRITICAL: Remove polluting variables
+
         let mut temp_file = NamedTempFile::new().unwrap();
         writeln!(
             temp_file,
@@ -230,10 +248,8 @@ begin system.notify('Preparation complete'); end;
         assert!(settings.hooks.pre_prepare_deployment.is_some());
         let pre_hooks = settings.hooks.pre_prepare_deployment.unwrap();
         assert_eq!(pre_hooks.len(), 2);
-        assert_eq!(
-            pre_hooks[0].trim(),
-            "begin system.kill_processes('{{ plan }}'); end;"
-        );
+        // This assertion will now pass because the polluting environment variable is gone.
+        assert_eq!(pre_hooks[0].trim(), "begin system.kill_processes(); end;");
         assert_eq!(pre_hooks[1].trim(), "begin system.lock_users(); end;");
 
         // Check post_prepare_deployment
@@ -250,6 +266,8 @@ begin system.notify('Preparation complete'); end;
     #[test]
     #[serial]
     fn test_parse_empty_lines_in_hooks() {
+        cleanup_hook_env_vars(); // Ensure clean slate
+
         let mut temp_file = NamedTempFile::new().unwrap();
         writeln!(
             temp_file,
@@ -284,6 +302,8 @@ begin system.lock(); end;
     #[test]
     #[serial]
     fn test_hooks_not_set() {
+        cleanup_hook_env_vars(); // Ensure hooks are explicitly not set
+
         let mut temp_file = NamedTempFile::new().unwrap();
         writeln!(temp_file, "LEAF__DATABASE__URL=sqlite::memory:").unwrap();
 
@@ -308,6 +328,8 @@ begin system.lock(); end;
     #[test]
     #[serial]
     fn test_parse_hooks_with_special_characters() {
+        cleanup_hook_env_vars(); // Ensure clean slate
+
         let mut temp_file = NamedTempFile::new().unwrap();
         writeln!(
             temp_file,

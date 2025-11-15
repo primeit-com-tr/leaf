@@ -1,15 +1,19 @@
+use crate::utils::serde::deserialize_opt_vec_from_string;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct RulesConfig {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_opt_vec_from_string")]
     pub exclude_object_types: Option<Vec<String>>,
 
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_opt_vec_from_string")]
     pub exclude_object_names: Option<Vec<String>>,
 
-    #[serde(default = "default_disabled_drop_types")]
+    #[serde(
+        default = "default_disabled_drop_types",
+        deserialize_with = "deserialize_opt_vec_from_string"
+    )]
     pub disabled_drop_types: Option<Vec<String>>,
 
     #[serde(default = "default_true")]

@@ -2,7 +2,7 @@ use crate::{
     delta::{delta::with_disabled_drop_types_excluded, find_deltas},
     entities::{
         ChangeActiveModel, ChangeModel, ChangesetActiveModel, ChangesetModel, DeploymentModel,
-        PlanModel, rollback,
+        PlanModel,
     },
     errors::{DeployError, PlanIsNotRunnableError, SchemaValidationError},
     oracle::OracleClient,
