@@ -1,23 +1,24 @@
+use crate::utils::serde::deserialize_opt_vec_from_string;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct HooksConfig {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_opt_vec_from_string")]
     pub pre_prepare_deployment: Option<Vec<String>>,
 
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_opt_vec_from_string")]
     pub post_prepare_deployment: Option<Vec<String>>,
 
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_opt_vec_from_string")]
     pub pre_apply_deployment: Option<Vec<String>>,
 
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_opt_vec_from_string")]
     pub post_apply_deployment: Option<Vec<String>>,
 
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_opt_vec_from_string")]
     pub pre_rollback: Option<Vec<String>>,
 
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_opt_vec_from_string")]
     pub post_rollback: Option<Vec<String>>,
 }
 

@@ -12,12 +12,12 @@ pub struct RulesConfig {
     #[serde(default = "default_disabled_drop_types")]
     pub disabled_drop_types: Option<Vec<String>>,
 
-    #[serde(default = "default_false")]
+    #[serde(default = "default_true")]
     pub disable_all_drops: bool,
 }
 
-fn default_false() -> bool {
-    false
+fn default_true() -> bool {
+    true
 }
 
 fn default_disabled_drop_types() -> Option<Vec<String>> {
@@ -107,7 +107,7 @@ impl Default for RulesConfig {
             exclude_object_types: default_exclude_object_types(),
             exclude_object_names: None,
             disabled_drop_types: default_disabled_drop_types(),
-            disable_all_drops: default_false(),
+            disable_all_drops: default_true(),
         }
     }
 }

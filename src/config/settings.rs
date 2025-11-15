@@ -66,6 +66,8 @@ mod tests {
     use super::*;
     use serial_test::serial;
     use std::env;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
 
     #[test]
     #[serial]
@@ -135,5 +137,201 @@ mod tests {
             env::remove_var("LEAF_ENV");
         }
         assert_eq!(get_env_file_name(), ".env");
+    }
+
+    #[test]
+    #[serial]
+    fn test_parse_multiline_hooks() {
+        // Create a temporary .env file with multiline hook configuration
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(
+            temp_file,
+            r#"LEAF__HOOKS__PRE_PREPARE_DEPLOYMENT="
+begin system.kill_processes('{{{{ plan }}}}'); end;
+begin system.lock_users(); end;
+""#
+        )
+        .unwrap();
+
+        unsafe {
+            env::set_var("LEAF_ENV_FILE", temp_file.path());
+        }
+
+        let settings = Settings::new().unwrap();
+
+        unsafe {
+            env::remove_var("LEAF_ENV_FILE");
+        }
+
+        assert!(settings.hooks.pre_prepare_deployment.is_some());
+        let hooks = settings.hooks.pre_prepare_deployment.unwrap();
+        assert_eq!(hooks.len(), 2);
+        assert_eq!(
+            hooks[0].trim(),
+            "begin system.kill_processes('{{ plan }}'); end;"
+        );
+        assert_eq!(hooks[1].trim(), "begin system.lock_users(); end;");
+    }
+
+    #[test]
+    #[serial]
+    fn test_parse_single_line_hook() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(
+            temp_file,
+            r#"LEAF__HOOKS__POST_APPLY_DEPLOYMENT="begin system.notify('Done'); end;""#
+        )
+        .unwrap();
+
+        unsafe {
+            env::set_var("LEAF_ENV_FILE", temp_file.path());
+        }
+
+        let settings = Settings::new().unwrap();
+
+        unsafe {
+            env::remove_var("LEAF_ENV_FILE");
+        }
+
+        assert!(settings.hooks.post_apply_deployment.is_some());
+        let hooks = settings.hooks.post_apply_deployment.unwrap();
+        assert_eq!(hooks.len(), 1);
+        assert_eq!(hooks[0], "begin system.notify('Done'); end;");
+    }
+
+    #[test]
+    #[serial]
+    fn test_parse_multiple_hooks() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(
+            temp_file,
+            r#"LEAF__HOOKS__PRE_PREPARE_DEPLOYMENT="
+begin system.kill_processes(); end;
+begin system.lock_users(); end;
+"
+LEAF__HOOKS__POST_PREPARE_DEPLOYMENT="
+begin system.unlock_users(); end;
+begin system.notify('Preparation complete'); end;
+""#
+        )
+        .unwrap();
+
+        unsafe {
+            env::set_var("LEAF_ENV_FILE", temp_file.path());
+        }
+
+        let settings = Settings::new().unwrap();
+
+        unsafe {
+            env::remove_var("LEAF_ENV_FILE");
+        }
+
+        // Check pre_prepare_deployment
+        assert!(settings.hooks.pre_prepare_deployment.is_some());
+        let pre_hooks = settings.hooks.pre_prepare_deployment.unwrap();
+        assert_eq!(pre_hooks.len(), 2);
+        assert_eq!(
+            pre_hooks[0].trim(),
+            "begin system.kill_processes('{{ plan }}'); end;"
+        );
+        assert_eq!(pre_hooks[1].trim(), "begin system.lock_users(); end;");
+
+        // Check post_prepare_deployment
+        assert!(settings.hooks.post_prepare_deployment.is_some());
+        let post_hooks = settings.hooks.post_prepare_deployment.unwrap();
+        assert_eq!(post_hooks.len(), 2);
+        assert_eq!(post_hooks[0].trim(), "begin system.unlock_users(); end;");
+        assert_eq!(
+            post_hooks[1].trim(),
+            "begin system.notify('Preparation complete'); end;"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_parse_empty_lines_in_hooks() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(
+            temp_file,
+            r#"LEAF__HOOKS__PRE_ROLLBACK="
+begin system.backup(); end;
+
+begin system.notify('Starting rollback'); end;
+
+begin system.lock(); end;
+""#
+        )
+        .unwrap();
+
+        unsafe {
+            env::set_var("LEAF_ENV_FILE", temp_file.path());
+        }
+
+        let settings = Settings::new().unwrap();
+
+        unsafe {
+            env::remove_var("LEAF_ENV_FILE");
+        }
+
+        assert!(settings.hooks.pre_rollback.is_some());
+        let hooks = settings.hooks.pre_rollback.unwrap();
+
+        // Filter out empty lines
+        let non_empty_hooks: Vec<_> = hooks.iter().filter(|h| !h.trim().is_empty()).collect();
+        assert_eq!(non_empty_hooks.len(), 3);
+    }
+
+    #[test]
+    #[serial]
+    fn test_hooks_not_set() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "LEAF__DATABASE__URL=sqlite::memory:").unwrap();
+
+        unsafe {
+            env::set_var("LEAF_ENV_FILE", temp_file.path());
+        }
+
+        let settings = Settings::new().unwrap();
+
+        unsafe {
+            env::remove_var("LEAF_ENV_FILE");
+        }
+
+        assert!(settings.hooks.pre_prepare_deployment.is_none());
+        assert!(settings.hooks.post_prepare_deployment.is_none());
+        assert!(settings.hooks.pre_apply_deployment.is_none());
+        assert!(settings.hooks.post_apply_deployment.is_none());
+        assert!(settings.hooks.pre_rollback.is_none());
+        assert!(settings.hooks.post_rollback.is_none());
+    }
+
+    #[test]
+    #[serial]
+    fn test_parse_hooks_with_special_characters() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(
+            temp_file,
+            r#"LEAF__HOOKS__POST_ROLLBACK="
+begin dbms_output.put_line('Status: {{{{ status }}}}'); end;
+begin execute immediate 'ALTER SESSION SET NLS_DATE_FORMAT = ''YYYY-MM-DD'''; end;
+""#
+        )
+        .unwrap();
+
+        unsafe {
+            env::set_var("LEAF_ENV_FILE", temp_file.path());
+        }
+
+        let settings = Settings::new().unwrap();
+
+        unsafe {
+            env::remove_var("LEAF_ENV_FILE");
+        }
+
+        assert!(settings.hooks.post_rollback.is_some());
+        let hooks = settings.hooks.post_rollback.unwrap();
+        assert_eq!(hooks.len(), 2);
+        assert!(hooks[0].contains("dbms_output.put_line"));
+        assert!(hooks[1].contains("ALTER SESSION"));
     }
 }
