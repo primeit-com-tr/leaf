@@ -554,7 +554,7 @@ async fn test_rollback_deployment() -> Result<()> {
 
     services
         .deployment_service
-        .rollback(plan_id, ProgressReporter::new(None))
+        .rollback(plan_id, Some(true), ProgressReporter::new(None))
         .await?;
 
     check_schema1_emp_rolled_back(&services.deployment_service.get_by_id(1).await?, &services)

@@ -162,6 +162,9 @@ pub enum PlanCommands {
     Rollback {
         #[arg(long, short, required = true)]
         plan: String,
+
+        #[arg(long, short, required = false)]
+        disable_hooks: Option<bool>,
     },
 }
 
@@ -245,7 +248,10 @@ pub async fn execute(action: &PlanCommands, ctx: &Context<'_>) {
             )
             .await
         }
-        PlanCommands::Rollback { plan } => rollback(&plan, ctx).await,
+        PlanCommands::Rollback {
+            plan,
+            disable_hooks,
+        } => rollback(&plan, *disable_hooks, ctx).await,
         PlanCommands::Reset { plan, yes } => reset(&plan, *yes, ctx).await,
     }
 }
@@ -483,7 +489,7 @@ pub async fn run(
     }
 }
 
-async fn rollback(plan_name: &str, ctx: &Context<'_>) {
+async fn rollback(plan_name: &str, disable_hooks: Option<bool>, ctx: &Context<'_>) {
     let plan = ctx
         .services
         .plan_service
@@ -523,7 +529,7 @@ async fn rollback(plan_name: &str, ctx: &Context<'_>) {
     let res = ctx
         .services
         .deployment_service
-        .rollback(plan.id, progress)
+        .rollback(plan.id, disable_hooks, progress)
         .await;
 
     if res.is_err() {

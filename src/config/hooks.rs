@@ -1,18 +1,25 @@
+use crate::utils::serde::deserialize_opt_vec_from_string;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct HooksConfig {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_opt_vec_from_string")]
     pub pre_prepare_deployment: Option<Vec<String>>,
 
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_opt_vec_from_string")]
     pub post_prepare_deployment: Option<Vec<String>>,
 
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_opt_vec_from_string")]
     pub pre_apply_deployment: Option<Vec<String>>,
 
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_opt_vec_from_string")]
     pub post_apply_deployment: Option<Vec<String>>,
+
+    #[serde(default, deserialize_with = "deserialize_opt_vec_from_string")]
+    pub pre_rollback: Option<Vec<String>>,
+
+    #[serde(default, deserialize_with = "deserialize_opt_vec_from_string")]
+    pub post_rollback: Option<Vec<String>>,
 }
 
 impl Default for HooksConfig {
@@ -22,6 +29,8 @@ impl Default for HooksConfig {
             post_apply_deployment: None,
             pre_prepare_deployment: None,
             post_prepare_deployment: None,
+            pre_rollback: None,
+            post_rollback: None,
         }
     }
 }
@@ -81,6 +90,7 @@ mod tests {
             post_prepare_deployment: Some(vec!["x".into()]),
             pre_apply_deployment: None,
             post_apply_deployment: Some(vec!["y".into()]),
+            ..Default::default()
         };
 
         let json = serde_json::to_string(&original).unwrap();
