@@ -5,7 +5,7 @@ use crate::{
     hooks::{HookRunner, HookRunnerContext},
     oracle::OracleClient,
     types::{Hooks, PlanStatus, StringList},
-    utils::DeploymentContext,
+    utils::{DeploymentContext, ProgressReporter},
 };
 use anyhow::Result;
 use tera::Context as TeraContext;
@@ -172,6 +172,52 @@ impl Model {
         );
 
         hook_runner.run_post_apply_deployment(client).await
+    }
+
+    pub async fn run_pre_rollback_hooks(
+        &self,
+        disable_hooks: Option<bool>,
+        client: &OracleClient,
+        progress: &ProgressReporter,
+    ) -> Result<()> {
+        let plan_name = self.name.clone();
+        let mut tera_ctx = TeraContext::new();
+        tera_ctx.insert("plan", &plan_name);
+
+        let progress = |msg: String| {
+            progress.report(msg);
+        };
+
+        let mut hook_runner = HookRunner::new(
+            disable_hooks.unwrap_or(self.disable_hooks),
+            self.get_hooks()?,
+            HookRunnerContext::new(tera_ctx, progress),
+        );
+
+        hook_runner.run_pre_rollback_hooks(client).await
+    }
+
+    pub async fn run_post_rollback_hooks(
+        &self,
+        disable_hooks: Option<bool>,
+        client: &OracleClient,
+        progress: &ProgressReporter,
+    ) -> Result<()> {
+        let plan_name = self.name.clone();
+        let mut tera_ctx = TeraContext::new();
+        tera_ctx.insert("plan", &plan_name);
+
+        let progress = |msg: String| {
+            progress.report(msg);
+        };
+
+        let mut hook_runner = HookRunner::new(
+            disable_hooks.unwrap_or(self.disable_hooks),
+            self.get_hooks()?,
+            HookRunnerContext::new(tera_ctx, progress),
+        );
+
+        hook_runner.run_post_rollback_hooks(client).await
     }
 }
 

@@ -2,7 +2,7 @@ use crate::{
     delta::{delta::with_disabled_drop_types_excluded, find_deltas},
     entities::{
         ChangeActiveModel, ChangeModel, ChangesetActiveModel, ChangesetModel, DeploymentModel,
-        PlanModel,
+        PlanModel, rollback,
     },
     errors::{DeployError, PlanIsNotRunnableError, SchemaValidationError},
     oracle::OracleClient,
@@ -601,10 +601,15 @@ impl DeploymentService {
     async fn execute_rollbacks(
         &self,
         deployment_id: i32,
+        disable_hooks: Option<bool>,
         progress: &ProgressReporter,
     ) -> Result<()> {
         let deployment = self.repo.get_by_id(deployment_id).await?;
         let plan = self.plan_repo.get_by_id(deployment.plan_id).await?;
+        let client = self.get_client(plan.target_connection_id).await?;
+
+        plan.run_pre_rollback_hooks(disable_hooks, &client, progress)
+            .await?;
 
         let rollbacks = self
             .rollback_repo
@@ -627,8 +632,6 @@ impl DeploymentService {
             .await?;
 
         let result: Result<()> = async {
-            let client = self.get_client(plan.target_connection_id).await?;
-
             for (i, (rollback, change, changeset)) in rollbacks.iter().enumerate() {
                 progress.report(format!(
                     "Executing rollback {} of {} for '{} {}.{}'",
@@ -677,8 +680,12 @@ impl DeploymentService {
         }
         .await;
 
+        let rollback_result = plan
+            .run_post_rollback_hooks(disable_hooks, &client, progress)
+            .await;
+
         // Handle the result and set appropriate final statuses
-        match result {
+        match rollback_result.and(result) {
             Ok(_) => {
                 self.repo
                     .set_status(deployment_id, DeploymentStatus::RolledBack)
@@ -700,11 +707,13 @@ impl DeploymentService {
     async fn rollback_by_deployment_id(
         &self,
         deployment_id: i32,
+        disable_hooks: Option<bool>,
         progress: ProgressReporter,
     ) -> Result<()> {
         match self.prepare_rollback(deployment_id, &progress).await? {
             Some(change_count) if change_count > 0 => {
-                self.execute_rollbacks(deployment_id, &progress).await?;
+                self.execute_rollbacks(deployment_id, disable_hooks, &progress)
+                    .await?;
                 Ok(())
             }
             Some(_) | None => {
@@ -714,14 +723,19 @@ impl DeploymentService {
         }
     }
 
-    pub async fn rollback(&self, plan_id: i32, progress: ProgressReporter) -> Result<()> {
+    pub async fn rollback(
+        &self,
+        plan_id: i32,
+        disable_hooks: Option<bool>,
+        progress: ProgressReporter,
+    ) -> Result<()> {
         let deployment = self
             .repo
             .find_last_successful_by_plan_id(plan_id)
             .await?
             .ok_or_else(|| anyhow!("No successful deployment found for plan {}", plan_id))?;
 
-        self.rollback_by_deployment_id(deployment.id, progress)
+        self.rollback_by_deployment_id(deployment.id, disable_hooks, progress)
             .await
     }
 }

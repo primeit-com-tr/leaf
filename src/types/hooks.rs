@@ -10,6 +10,8 @@ pub struct Hooks {
     pub post_prepare_deployment: Option<Vec<String>>,
     pub pre_apply_deployment: Option<Vec<String>>,
     pub post_apply_deployment: Option<Vec<String>>,
+    pub pre_rollback: Option<Vec<String>>,
+    pub post_rollback: Option<Vec<String>>,
 }
 
 impl Hooks {
@@ -19,6 +21,8 @@ impl Hooks {
             post_prepare_deployment: config.post_prepare_deployment,
             pre_apply_deployment: config.pre_apply_deployment,
             post_apply_deployment: config.post_apply_deployment,
+            pre_rollback: config.pre_rollback,
+            post_rollback: config.post_rollback,
         }
     }
 
@@ -58,6 +62,14 @@ impl Hooks {
     pub fn get_post_apply_deployment(&self, ctx: &Context) -> Result<Option<Vec<String>>> {
         self.render_hooks(ctx, &self.post_apply_deployment)
     }
+
+    pub fn get_pre_rollback(&self, ctx: &Context) -> Result<Option<Vec<String>>> {
+        self.render_hooks(ctx, &self.pre_rollback)
+    }
+
+    pub fn get_post_rollback(&self, ctx: &Context) -> Result<Option<Vec<String>>> {
+        self.render_hooks(ctx, &self.post_rollback)
+    }
 }
 
 #[cfg(test)]
@@ -82,6 +94,7 @@ mod tests {
             post_prepare_deployment: None,
             pre_apply_deployment: None,
             post_apply_deployment: Some(vec!["apply_done".to_string()]),
+            ..Default::default()
         };
 
         let hooks = Hooks::from_config(cfg.clone());

@@ -171,4 +171,51 @@ where
         )
         .await
     }
+
+    pub async fn run_pre_rollback_hooks(&mut self, client: &OracleClient) -> Result<()> {
+        if self.disable_hooks {
+            return Ok(());
+        }
+        if self.hooks.is_none() {
+            self.ctx
+                .progress("✅ No pre-rollback hooks found".to_string());
+            return Ok(());
+        }
+        let hooks = self.hooks.as_ref().unwrap();
+
+        self.ctx
+            .progress("✅ Executing pre-rollback hooks".to_string());
+
+        self.run(
+            client,
+            hooks
+                .get_pre_rollback(&self.ctx.tera_ctx())?
+                .unwrap_or_default(),
+        )
+        .await
+    }
+
+    pub async fn run_post_rollback_hooks(&mut self, client: &OracleClient) -> Result<()> {
+        if self.disable_hooks {
+            return Ok(());
+        }
+
+        if self.hooks.is_none() {
+            self.ctx
+                .progress("✅ No post-rollback hooks found".to_string());
+            return Ok(());
+        }
+        let hooks = self.hooks.as_ref().unwrap();
+
+        self.ctx
+            .progress("✅ Executing post-rollback hooks".to_string());
+
+        self.run(
+            client,
+            hooks
+                .get_post_rollback(&self.ctx.tera_ctx())?
+                .unwrap_or_default(),
+        )
+        .await
+    }
 }
