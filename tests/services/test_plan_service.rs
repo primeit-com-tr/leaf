@@ -87,6 +87,8 @@ async fn test_create_plan() -> Result<()> {
             None,
             None,
             false,
+            true,
+            None,
         )
         .await?;
 
@@ -110,6 +112,8 @@ async fn test_create_plan() -> Result<()> {
             None,
             None,
             false,
+            true,
+            None,
         )
         .await;
     assert!(res.is_err());
@@ -125,6 +129,8 @@ async fn test_create_plan() -> Result<()> {
             None,
             None,
             false,
+            true,
+            None,
         )
         .await;
     assert!(res.is_ok());
@@ -154,6 +160,8 @@ async fn test_find_by_name() -> Result<()> {
             None,
             None,
             false,
+            true,
+            None,
         )
         .await?;
 
@@ -192,6 +200,8 @@ async fn test_get_by_id() -> Result<()> {
             None,
             None,
             false,
+            true,
+            None,
         )
         .await?;
 
@@ -230,6 +240,8 @@ async fn test_get_all() -> Result<()> {
             None,
             None,
             false,
+            true,
+            None,
         )
         .await?;
 
@@ -269,6 +281,8 @@ async fn test_get_by_status() -> Result<()> {
             None,
             None,
             false,
+            true,
+            None,
         )
         .await?;
 
@@ -329,6 +343,8 @@ async fn test_prune() -> Result<()> {
             None,
             None,
             false,
+            true,
+            None,
         )
         .await?;
     assert_eq!(plan.name, "test");

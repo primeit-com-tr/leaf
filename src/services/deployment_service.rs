@@ -5,20 +5,18 @@ use crate::{
         PlanModel,
     },
     errors::{DeployError, PlanIsNotRunnableError, SchemaValidationError},
-    hooks::{HookRunner, HookRunnerContext},
     oracle::OracleClient,
     repo::{
         ChangeRepository, ChangesetRepository, ConnectionRepository, DeploymentRepository,
         PlanRepository, rollback_repo::RollbackRepository,
     },
-    types::{ChangeStatus, Delta, DeploymentStatus, Hooks, PlanStatus, RollbackStatus, StringList},
+    types::{ChangeStatus, Delta, DeploymentStatus, PlanStatus, RollbackStatus, StringList},
     utils::{DeploymentContext, ProgressReporter},
 };
 use anyhow::{Context, Result, anyhow};
-use chrono::{NaiveDateTime, Utc};
+use chrono::NaiveDateTime;
 use sea_orm::IntoActiveModel;
 use std::sync::Arc;
-use tera::Context as TeraContext;
 use tokio::try_join;
 use tracing::warn;
 
@@ -269,13 +267,17 @@ impl DeploymentService {
         ctx: &mut DeploymentContext,
     ) -> Result<Option<i32>> {
         let plan = self.plan_repo.get_by_id(plan_id).await?;
+        let source_client = self.get_client(plan.source_connection_id).await?;
+        let target_client = self.get_client(plan.target_connection_id).await?;
+
+        plan.run_pre_prepare_hooks(disable_hooks, &source_client, ctx)
+            .await?;
+
         let plan_id = plan.id;
 
         ctx.progress(format!("Preparing deployment for plan '{}' ...", plan.name));
 
         let result = async {
-            let source_client = self.get_client(plan.source_connection_id).await?;
-            let target_client = self.get_client(plan.target_connection_id).await?;
             let schemas = plan.get_schemas();
 
             ctx.progress(format!("Validating schemas..."));
@@ -284,9 +286,6 @@ impl DeploymentService {
 
             let exclude_object_types = plan.get_exclude_object_types();
             let exclude_object_names = plan.get_exclude_object_names();
-
-            plan.run_pre_prepare_hooks(disable_hooks, &source_client, ctx)
-                .await?;
 
             ctx.progress(format!("Fetching source objects..."));
             let sources = source_client
@@ -349,6 +348,9 @@ impl DeploymentService {
 
         self.plan_repo.set_status(plan_id, final_status).await?;
 
+        plan.run_post_prepare_hooks(disable_hooks, &source_client, ctx)
+            .await?;
+
         result
     }
 
@@ -367,117 +369,128 @@ impl DeploymentService {
         let plan = self.plan_repo.get_by_id(plan_id).await?;
         self.validate_plan_is_runnable(&plan, ctx).await?;
 
-        ctx.progress(format!("Setting plan '{}' status to RUNNING...", plan.name));
-        self.plan_repo
-            .set_status(plan_id, PlanStatus::Running)
-            .await?;
-
-        ctx.progress(format!(
-            "Setting deployment '{}' status to RUNNING...",
-            deployment_id
-        ));
-        self.repo
-            .set_status(deployment_id, DeploymentStatus::Running)
-            .await?;
-
-        ctx.progress(format!(
-            "Retrieving changesets for deployment ID('{}')...",
-            deployment_id
-        ));
-        let changesets_with_changes = self
-            .changeset_repo
-            .get_by_deployment_id_with_changes(deployment_id)
-            .await?;
-
-        if changesets_with_changes.is_empty() {
-            ctx.progress(format!(
-                "No changesets found for deployment {}. Skipping deployment...",
-                deployment_id
-            ));
-            return Ok(());
-        }
-
         ctx.progress(format!("Getting target client for plan '{}'...", plan.name));
         let client = self.get_client(plan.target_connection_id).await?;
 
-        let mut errors: Vec<String> = Vec::new();
-        for (changeset, changes) in changesets_with_changes {
-            let object_type = changeset.object_type.clone();
-            let object_owner = changeset.object_owner.clone();
-            let object_name = changeset.object_name.clone();
+        plan.run_pre_apply_hooks(disable_hooks, &client, ctx)
+            .await?;
 
-            if changes.is_empty() {
-                ctx.progress(format!(
-                    "Skipping changeset for '{} {}.{}' because no changes were found",
-                    object_type, object_owner, object_name
-                ));
-                continue;
-            }
-
-            let mut changeset_active: ChangesetActiveModel = changeset.into_active_model();
-            changeset_active.start();
-
-            self.changeset_repo
-                .save_changeset(&changeset_active)
+        let result = async {
+            ctx.progress(format!("Setting plan '{}' status to RUNNING...", plan.name));
+            self.plan_repo
+                .set_status(plan_id, PlanStatus::Running)
                 .await?;
 
-            let mut changeset_errors = Vec::new();
+            ctx.progress(format!(
+                "Setting deployment '{}' status to RUNNING...",
+                deployment_id
+            ));
+            self.repo
+                .set_status(deployment_id, DeploymentStatus::Running)
+                .await?;
 
-            for change in changes {
-                let change_id = change.id;
-                let script = change.script.clone();
+            ctx.progress(format!(
+                "Retrieving changesets for deployment ID('{}')...",
+                deployment_id
+            ));
+            let changesets_with_changes = self
+                .changeset_repo
+                .get_by_deployment_id_with_changes(deployment_id)
+                .await?;
 
-                let mut change_active: ChangeActiveModel = change.into_active_model();
-                change_active.start();
-
-                self.change_repo.save_change(&change_active).await?;
-
+            if changesets_with_changes.is_empty() {
                 ctx.progress(format!(
-                    "Executing change for '{} {}.{}'",
-                    object_type, object_owner, object_name
+                    "No changesets found for deployment {}. Skipping deployment...",
+                    deployment_id
                 ));
-                let result = match client.execute(&script).await {
-                    Ok(_) => {
-                        change_active.end(None);
-                        Ok(())
-                    }
-                    Err(e) => {
-                        let error_msg = format!("Change {} ({}): {}", change_id, object_name, e);
+                return Ok(());
+            }
 
-                        // Update change status with error message
-                        change_active.end(Some(e.to_string()));
+            let mut errors: Vec<String> = Vec::new();
+            for (changeset, changes) in changesets_with_changes {
+                let object_type = changeset.object_type.clone();
+                let object_owner = changeset.object_owner.clone();
+                let object_name = changeset.object_name.clone();
 
-                        // Collect errors for later reporting
-                        changeset_errors.push(error_msg.clone());
-                        errors.push(error_msg);
-
-                        Err(e)
-                    }
-                };
-
-                self.change_repo.save_change(&change_active).await?;
-
-                if result.is_err() && fail_fast {
-                    return Err(DeployError::Errors(1, errors).into());
+                if changes.is_empty() {
+                    ctx.progress(format!(
+                        "Skipping changeset for '{} {}.{}' because no changes were found",
+                        object_type, object_owner, object_name
+                    ));
+                    continue;
                 }
+
+                let mut changeset_active: ChangesetActiveModel = changeset.into_active_model();
+                changeset_active.start();
+
+                self.changeset_repo
+                    .save_changeset(&changeset_active)
+                    .await?;
+
+                let mut changeset_errors = Vec::new();
+
+                for change in changes {
+                    let change_id = change.id;
+                    let script = change.script.clone();
+
+                    let mut change_active: ChangeActiveModel = change.into_active_model();
+                    change_active.start();
+
+                    self.change_repo.save_change(&change_active).await?;
+
+                    ctx.progress(format!(
+                        "Executing change for '{} {}.{}'",
+                        object_type, object_owner, object_name
+                    ));
+                    let result = match client.execute(&script).await {
+                        Ok(_) => {
+                            change_active.end(None);
+                            Ok(())
+                        }
+                        Err(e) => {
+                            let error_msg =
+                                format!("Change {} ({}): {}", change_id, object_name, e);
+
+                            // Update change status with error message
+                            change_active.end(Some(e.to_string()));
+
+                            // Collect errors for later reporting
+                            changeset_errors.push(error_msg.clone());
+                            errors.push(error_msg);
+
+                            Err(e)
+                        }
+                    };
+
+                    self.change_repo.save_change(&change_active).await?;
+
+                    if result.is_err() && fail_fast {
+                        return Err(DeployError::Errors(1, errors).into());
+                    }
+                }
+
+                if changeset_errors.is_empty() {
+                    changeset_active.end(None);
+                } else {
+                    changeset_active.end(Some(StringList(changeset_errors)));
+                }
+
+                self.changeset_repo
+                    .save_changeset(&changeset_active)
+                    .await?;
             }
 
-            if changeset_errors.is_empty() {
-                changeset_active.end(None);
-            } else {
-                changeset_active.end(Some(StringList(changeset_errors)));
+            if !errors.is_empty() {
+                return Err(DeployError::Errors(errors.len(), errors).into());
             }
-
-            self.changeset_repo
-                .save_changeset(&changeset_active)
-                .await?;
+            Ok(())
         }
+        .await;
 
-        if !errors.is_empty() {
-            return Err(DeployError::Errors(errors.len(), errors).into());
-        }
+        plan.run_post_apply_hooks(disable_hooks, &client, ctx)
+            .await?;
 
-        Ok(())
+        result
     }
 
     pub async fn find_last_deployment_by_plan_id(

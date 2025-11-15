@@ -78,53 +78,6 @@ where
         Ok(())
     }
 
-    pub async fn run_pre_plan_run(&mut self, client: &OracleClient) -> Result<()> {
-        if self.disable_hooks {
-            return Ok(());
-        }
-        if self.hooks.is_none() {
-            self.ctx
-                .progress("✅ No pre-plan-run hooks found".to_string());
-            return Ok(());
-        }
-        let hooks = self.hooks.as_ref().unwrap();
-
-        self.ctx
-            .progress("✅ Executing pre-plan-run hooks".to_string());
-
-        self.run(
-            client,
-            hooks
-                .get_pre_plan_run(&self.ctx.tera_ctx())?
-                .unwrap_or_default(),
-        )
-        .await
-    }
-
-    pub async fn run_post_plan_run(&mut self, client: &OracleClient) -> Result<()> {
-        if self.disable_hooks {
-            return Ok(());
-        }
-
-        if self.hooks.is_none() {
-            self.ctx
-                .progress("✅ No post-plan-run hooks found".to_string());
-            return Ok(());
-        }
-        let hooks = self.hooks.as_ref().unwrap();
-
-        self.ctx
-            .progress("✅ Executing post-plan-run hooks".to_string());
-
-        self.run(
-            client,
-            hooks
-                .get_post_plan_run(&self.ctx.tera_ctx())?
-                .unwrap_or_default(),
-        )
-        .await
-    }
-
     pub async fn run_pre_prepare_deployment(&mut self, client: &OracleClient) -> Result<()> {
         if self.disable_hooks {
             return Ok(());

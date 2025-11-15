@@ -74,33 +74,6 @@ impl Model {
             .transpose()
     }
 
-    /// Set hooks from a Hooks struct (mutates the model)
-    pub fn set_hooks(&mut self, hooks: Option<Hooks>) -> Result<(), serde_json::Error> {
-        self.hooks = hooks.map(|h| serde_json::to_value(h)).transpose()?;
-        Ok(())
-    }
-
-    /// Update status (mutates the model)
-    pub fn set_status(&mut self, status: PlanStatus) {
-        self.status = status;
-    }
-
-    pub fn set_running(&mut self) {
-        self.set_status(PlanStatus::Running);
-    }
-
-    pub fn set_rolling_back(&mut self) {
-        self.set_status(PlanStatus::RollingBack);
-    }
-
-    pub fn set_rolled_back(&mut self) {
-        self.set_status(PlanStatus::RolledBack);
-    }
-
-    pub fn set_rollback_error(&mut self) {
-        self.set_status(PlanStatus::RollbackError);
-    }
-
     pub fn as_payload(&self) -> serde_json::Value {
         // reserved for future use
         todo!()
@@ -126,7 +99,76 @@ impl Model {
             HookRunnerContext::new(tera_ctx, progress),
         );
 
-        hook_runner.run_pre_plan_run(client).await
+        hook_runner.run_pre_prepare_deployment(client).await
+    }
+
+    pub async fn run_post_prepare_hooks(
+        &self,
+        disable_hooks: Option<bool>,
+        client: &OracleClient,
+        ctx: &mut DeploymentContext,
+    ) -> Result<()> {
+        let plan_name = self.name.clone();
+        let mut tera_ctx = TeraContext::new();
+        tera_ctx.insert("plan", &plan_name);
+
+        let progress = |msg: String| {
+            ctx.progress(msg);
+        };
+
+        let mut hook_runner = HookRunner::new(
+            disable_hooks.unwrap_or(self.disable_hooks),
+            self.get_hooks()?,
+            HookRunnerContext::new(tera_ctx, progress),
+        );
+
+        hook_runner.run_post_apply_deployment(client).await
+    }
+
+    pub async fn run_pre_apply_hooks(
+        &self,
+        disable_hooks: Option<bool>,
+        client: &OracleClient,
+        ctx: &mut DeploymentContext,
+    ) -> Result<()> {
+        let plan_name = self.name.clone();
+        let mut tera_ctx = TeraContext::new();
+        tera_ctx.insert("plan", &plan_name);
+
+        let progress = |msg: String| {
+            ctx.progress(msg);
+        };
+
+        let mut hook_runner = HookRunner::new(
+            disable_hooks.unwrap_or(self.disable_hooks),
+            self.get_hooks()?,
+            HookRunnerContext::new(tera_ctx, progress),
+        );
+
+        hook_runner.run_pre_apply_deployment(client).await
+    }
+
+    pub async fn run_post_apply_hooks(
+        &self,
+        disable_hooks: Option<bool>,
+        client: &OracleClient,
+        ctx: &mut DeploymentContext,
+    ) -> Result<()> {
+        let plan_name = self.name.clone();
+        let mut tera_ctx = TeraContext::new();
+        tera_ctx.insert("plan", &plan_name);
+
+        let progress = |msg: String| {
+            ctx.progress(msg);
+        };
+
+        let mut hook_runner = HookRunner::new(
+            disable_hooks.unwrap_or(self.disable_hooks),
+            self.get_hooks()?,
+            HookRunnerContext::new(tera_ctx, progress),
+        );
+
+        hook_runner.run_post_apply_deployment(client).await
     }
 }
 

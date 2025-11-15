@@ -12,7 +12,7 @@ use crate::{
         Context,
         commands::{ExitOnErr, get_cut_off_date_or_bail, new_spinner},
     },
-    types::PlanStatus,
+    types::{Hooks, PlanStatus},
     utils::{
         DeploymentContext, ProgressReporter, deployment_context::DeploymentContextOptions,
         parsers::parse_cutoff_date,
@@ -41,12 +41,15 @@ pub struct PlansRunArgs {
     fail_fast: Option<bool>,
 
     /// Dry run mode, this will not apply changes to the database
-    #[arg(short, long)]
+    #[arg(long)]
     dry: bool,
 
     /// Show report after running the plan
-    #[arg(short, long, default_value_t = false)]
+    #[arg(long, default_value_t = false)]
     show_report: bool,
+
+    #[arg( long, default_value = None)]
+    disable_hooks: Option<bool>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -119,6 +122,10 @@ pub enum PlanCommands {
         /// Fail fast mode
         #[arg(long)]
         fail_fast: bool,
+
+        /// Disable hooks
+        #[arg(long, default_value_t = false)]
+        disable_hooks: bool,
     },
     /// List plans, schemas, excluded object types
     List(ListCommand),
@@ -186,6 +193,7 @@ pub async fn execute(action: &PlanCommands, ctx: &Context<'_>) {
             exclude_object_names,
             disabled_drop_types,
             fail_fast,
+            disable_hooks,
         } => {
             add(
                 name,
@@ -196,6 +204,7 @@ pub async fn execute(action: &PlanCommands, ctx: &Context<'_>) {
                 exclude_object_names,
                 disabled_drop_types,
                 *fail_fast,
+                *disable_hooks,
                 ctx,
             )
             .await
@@ -224,6 +233,7 @@ pub async fn execute(action: &PlanCommands, ctx: &Context<'_>) {
                 &args.dry,
                 args.cutoff_date,
                 args.fail_fast,
+                args.disable_hooks,
                 args.show_report,
                 ctx,
             )
@@ -243,6 +253,7 @@ pub async fn add(
     exclude_object_names: &Vec<String>,
     excluded_drop_types: &Vec<String>,
     fail_fast: bool,
+    disable_hooks: bool,
     ctx: &Context<'_>,
 ) {
     ctx.services
@@ -256,6 +267,8 @@ pub async fn add(
             Some(exclude_object_names.to_vec()),
             Some(excluded_drop_types.to_vec()),
             fail_fast,
+            disable_hooks,
+            Some(Hooks::from_config(ctx.settings.hooks.clone())),
         )
         .await
         .exit_on_err(&format!("❌ Plan creation failed for '{}'", name));
@@ -403,6 +416,7 @@ pub async fn run(
     dry: &bool,
     cutoff_date: Option<NaiveDateTime>,
     fail_fast: Option<bool>,
+    disable_hooks: Option<bool>,
     show_report: bool,
     ctx: &Context<'_>,
 ) {
@@ -421,7 +435,7 @@ pub async fn run(
 
     let cutoff_date = get_cut_off_date_or_bail(cutoff_date, plan.id, ctx).await;
 
-    let mut sink = DeploymentContext::new(Some(DeploymentContextOptions::new(
+    let mut dctx = DeploymentContext::new(Some(DeploymentContextOptions::new(
         *dry,
         false,
         None,
@@ -433,7 +447,13 @@ pub async fn run(
     let res = ctx
         .services
         .deployment_service
-        .run(plan.id, fail_fast.unwrap_or(false), cutoff_date, &mut sink)
+        .run(
+            plan.id,
+            fail_fast.unwrap_or(false),
+            cutoff_date,
+            disable_hooks,
+            &mut dctx,
+        )
         .await;
 
     if res.is_err() {
@@ -441,8 +461,8 @@ pub async fn run(
         std::process::exit(1);
     }
 
-    if sink.is_dry_run() {
-        sink.print_summary("✅ Dry run completed successfully");
+    if dctx.is_dry_run() {
+        dctx.print_summary("✅ Dry run completed successfully");
     }
 
     spinner.finish_and_clear();

@@ -83,6 +83,10 @@ pub enum DeploymentCommands {
 
         #[arg(long, value_name = "DIR", value_parser = validate_dir)]
         output_path: Option<PathBuf>,
+
+        /// Disable pre-prepare-deployment and post-prepare-deployment hooks
+        #[arg(long, default_value = None)]
+        disable_hooks: Option<bool>,
     },
 
     /// Applies a prepared deployment.
@@ -94,6 +98,10 @@ pub enum DeploymentCommands {
         /// Fail fast mode
         #[arg(long, required = false)]
         fail_fast: bool,
+
+        /// Disable pre-apply-deployment and post-apply-deployment hooks
+        #[arg(long, default_value = None)]
+        disable_hooks: Option<bool>,
     },
 }
 
@@ -212,12 +220,25 @@ pub async fn execute(action: &DeploymentCommands, ctx: &Context<'_>) {
             dry,
             collect_scripts,
             output_path,
-        } => prepare_deployment(plan, cutoff_date, *dry, *collect_scripts, output_path, ctx).await,
+            disable_hooks,
+        } => {
+            prepare_deployment(
+                plan,
+                cutoff_date,
+                *dry,
+                *collect_scripts,
+                output_path,
+                *disable_hooks,
+                ctx,
+            )
+            .await
+        }
 
         DeploymentCommands::Apply {
             deployment_id,
             fail_fast,
-        } => apply_deployment(*deployment_id, *fail_fast, ctx).await,
+            disable_hooks,
+        } => apply_deployment(*deployment_id, *fail_fast, *disable_hooks, ctx).await,
     }
 }
 
@@ -604,6 +625,7 @@ async fn prepare_deployment(
     dry: bool,
     collect_scripts: bool,
     output_path: &Option<PathBuf>,
+    disable_hooks: Option<bool>,
     ctx: &Context<'_>,
 ) {
     let (spinner, tx) = new_spinner();
@@ -633,7 +655,7 @@ async fn prepare_deployment(
     let res = ctx
         .services
         .deployment_service
-        .prepare(plan.id, cutoff_date, &mut dctx)
+        .prepare(plan.id, cutoff_date, disable_hooks, &mut dctx)
         .await;
 
     spinner.finish_and_clear();
@@ -664,7 +686,12 @@ async fn prepare_deployment(
     );
 }
 
-async fn apply_deployment(deployment_id: i32, fail_fast: bool, ctx: &Context<'_>) {
+async fn apply_deployment(
+    deployment_id: i32,
+    fail_fast: bool,
+    disable_hooks: Option<bool>,
+    ctx: &Context<'_>,
+) {
     let (spinner, tx) = new_spinner();
 
     let mut dctx = DeploymentContext::new(Some(DeploymentContextOptions::new(
@@ -707,7 +734,7 @@ async fn apply_deployment(deployment_id: i32, fail_fast: bool, ctx: &Context<'_>
     let res = ctx
         .services
         .deployment_service
-        .apply(deployment_id, fail_fast, &mut dctx)
+        .apply(deployment_id, fail_fast, disable_hooks, &mut dctx)
         .await;
 
     spinner.finish_and_clear();

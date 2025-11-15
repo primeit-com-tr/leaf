@@ -152,6 +152,8 @@ async fn test_run_deployment_single_schema() -> Result<()> {
             None,
             None,
             false,
+            true,
+            None,
         )
         .await?;
 
@@ -159,10 +161,11 @@ async fn test_run_deployment_single_schema() -> Result<()> {
 
     let deployment_id = services
         .deployment_service
-        .prepare_and_run(
+        .run(
             plan.id,
             false,
             cutoff_date,
+            None,
             &mut DeploymentContext::default(),
         )
         .await?;
@@ -201,6 +204,8 @@ async fn test_run_deployment() -> Result<()> {
             None,
             None,
             false,
+            true,
+            None,
         )
         .await?;
 
@@ -208,10 +213,11 @@ async fn test_run_deployment() -> Result<()> {
 
     let deployment = services
         .deployment_service
-        .prepare_and_run(
+        .run(
             plan.id,
             false,
             cutoff_date,
+            None,
             &mut DeploymentContext::default(),
         )
         .await?;
@@ -251,6 +257,8 @@ async fn test_run_deployment_exclude_object_types() -> Result<()> {
             None,
             None,
             false,
+            true,
+            None,
         )
         .await?;
 
@@ -258,10 +266,11 @@ async fn test_run_deployment_exclude_object_types() -> Result<()> {
 
     let deployment = services
         .deployment_service
-        .prepare_and_run(
+        .run(
             plan.id,
             false,
             cutoff_date,
+            None,
             &mut DeploymentContext::default(),
         )
         .await?;
@@ -300,6 +309,8 @@ async fn test_run_deployment_exclude_object_names() -> Result<()> {
             Some(vec!["BONUS".to_string()]),
             None,
             false,
+            true,
+            None,
         )
         .await?;
 
@@ -308,10 +319,11 @@ async fn test_run_deployment_exclude_object_names() -> Result<()> {
 
     let deployment = services
         .deployment_service
-        .prepare_and_run(
+        .run(
             plan.id,
             false,
             cutoff_date,
+            None,
             &mut DeploymentContext::default(),
         )
         .await?;
@@ -350,6 +362,8 @@ async fn test_run_deployment_disabled_drop_types() -> Result<()> {
             None,
             Some(vec!["TABLE".to_string(), "COLUMN".to_string()]),
             false,
+            true,
+            None,
         )
         .await?;
 
@@ -357,10 +371,11 @@ async fn test_run_deployment_disabled_drop_types() -> Result<()> {
 
     let deployment = services
         .deployment_service
-        .prepare_and_run(
+        .run(
             plan.id,
             false,
             cutoff_date,
+            None,
             &mut DeploymentContext::default(),
         )
         .await?;
@@ -400,6 +415,8 @@ async fn test_rollback_deployment() -> Result<()> {
             None,
             None,
             false,
+            true,
+            None,
         )
         .await?;
 
@@ -408,10 +425,11 @@ async fn test_rollback_deployment() -> Result<()> {
 
     let result = services
         .deployment_service
-        .prepare_and_run(
+        .run(
             plan_id,
             false,
             cutoff_date,
+            None,
             &mut DeploymentContext::default(),
         )
         .await?;
