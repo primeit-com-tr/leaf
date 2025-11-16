@@ -35,8 +35,10 @@ fn get_env_file_name() -> String {
 
 impl Settings {
     pub fn new() -> Result<Self, ConfigError> {
+        let env_file_name = get_env_file_name();
+
         // Load .env file using `LEAF_ENV` env var
-        dotenvy::from_filename(get_env_file_name()).ok();
+        dotenvy::from_filename(env_file_name).ok();
 
         let settings = Config::builder()
             // Load environment variables with LEAF prefix

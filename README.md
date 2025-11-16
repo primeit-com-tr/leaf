@@ -19,6 +19,8 @@ Simple and powerful database deployment tool for `Oracle` Database.
   - [Deployments](#deployments)
   - [Development](#development)
     - [Running Tests](#running-tests)
+    - [Hooks](#hooks)
+  - [Examples](#examples)
     - [Release](#release)
 
 
@@ -194,8 +196,8 @@ LEAF__DATABASE__URL=sqlite://leaf.db?mode=rwc
 
 # Pre-prepare-deployment hooks
 # eg. LEAF__HOOKS__PRE_PREPARE_DEPLOYMENT="
-# begin system.kill_processes('{{ plan }}'); end;
-# begin system.lock_users(); end;
+# begin my_user.kill_processes('{{ plan }}'); end;
+# begin my_user.lock_users(); end;
 # "
 # This will call system.kill_processes(plan) and system.lock_users() before deployment.
 # Note that you don't have pass the plan name as a parameter, but it will be passed as a context.
@@ -243,34 +245,17 @@ There are three main concepts in LEAF:
 - 🧭 Plans
 - 🚀 Deployments
 
+Also there is a concept called `Hooks` which is used to execute scripts during the plan creation, apply and rollback processes.
+See [Hooks](#hooks) section for more details.
+
 ### Connections
 Connections are used to connect to your source and target databases. You can create as many connections as you need.
 
 #### Create a connection
-To create a connection, use the `connections create` command:
+To create a connection, use the `connections add` command:
 
 ```bash
-# ❯ leaf connections add --help
-
-Create a new connection
-
-Usage: leaf connections add --name <NAME> --username <USERNAME> --password <PASSWORD> --connection-string <CONNECTION_STRING>
-
-Options:
-      --name <NAME>                            Connection name (unique) eg. my-source-db
-      --username <USERNAME>                    Username
-      --password <PASSWORD>                    Password
-      --connection-string <CONNECTION_STRING>  Connection string eg. localhost:1521/XEPDB1
-  -h, --help
-```
-
-Example:
-```bash
-leaf connections add \
-    --name my-source-db \
-    --username system \
-    --password Welcome1
-    --connection-string localhost:1521/XEPDB1
+leaf connections add --help
 ```
 
 > [!WARNING]
@@ -280,50 +265,11 @@ leaf connections add \
 
 You can see all available connection commands with `leaf connections --help`.
 
-```bash
-# ❯ leaf connections --help
-Manage connections
-
-Usage: leaf connections <COMMAND>
-
-Commands:
-  add     Create a new connection
-  test    Test a connection
-  ping    Same as test, but for saved connections
-  remove  Delete a connection
-  prune   Remove all connections
-  list    List all connections
-  help    Print this message or the help of the given subcommand(s)
-
-Options:
-  -h, --help  Print help
-```
-
-
 ### Plans
 
 Plans are used to store variables to calculate the changes in your source database to your target database.
 Basically, plan stores source and target connections, schemas to check and other variables to control which objects to include in the plan.
 
-```bash
-# ❯ leaf plans --help
-Plan and run database deployments
-
-Usage: leaf plans <COMMAND>
-
-Commands:
-  add       Add a plan
-  list      List plans, schemas, excluded object types
-  remove    Remove a plan
-  prune     Remove all plans
-  reset     Reset plan status to IDLE
-  run       Run a plan
-  rollback  Rollback a plan
-  help      Print this message or the help of the given subcommand(s)
-
-Options:
-  -h, --help  Print help
-```
 
 ### Add a plan
 To add a plan, use the `plans add` command:
@@ -332,37 +278,10 @@ To add a plan, use the `plans add` command:
 > Before adding a plan, you need to create related connections first.
 
 ```bash
-❯ leaf plans add --help
-Add a plan
-
-Usage: leaf plans add [OPTIONS] --name <NAME> --source <SOURCE> --target <TARGET> --schemas <SCHEMAS>
-
-Options:
-      --name <NAME>
-          Name of the plan
-      --source <SOURCE>
-          Source connection name
-      --target <TARGET>
-          Target connection name
-      --schemas <SCHEMAS>
-          Comma-separated list of schemas to include in the plan
-      --exclude-object-types <EXCLUDE_OBJECT_TYPES>
-          Comma-separated list of object types to exclude from the plan
-      --exclude-object-names <EXCLUDE_OBJECT_NAMES>
-          Comma-separated list of object names to exclude from the plan
-      --disabled-drop-types <DISABLED_DROP_TYPES>
-          Comma-separated list of disabled object types do drop (e.g., TABLE, VIEW, PROCEDURE, FUNCTION, TRIGGER, etc.)
-      --disable-all-drops <DISABLE_ALL_DROPS>
-          Disable all DROP operations [possible values: true, false]
-      --fail-fast
-          Fail fast mode
-      --disable-hooks
-          Disable hooks
-  -h, --help
-          Print help
+leaf plans add --help
 ```
 
-This will create a new plan with the given name, source and target connections, and schemas to include in the plan.
+Add command will create a new plan with the given name, source and target connections, and schemas to include in the plan.
 This won't run the plan, you need to use the `run` command for that.
 
 - Several parameters in plans commands are combined with the values in `.env` file.
@@ -386,39 +305,7 @@ Also you can override this setting by passing `--fail-fast` flag to the `run` co
 To run a plan, use the `plans run` command:
 
 ```bash
-# ❯ leaf plans run --help
-Run a plan
-
-Usage: leaf plans run [OPTIONS] <NAME>
-
-Arguments:
-  <NAME>
-          Plan name, case insensitive
-
-Options:
-      --cutoff-date <CUTOFF_DATE>
-          Cutoff date — deploy everything changed after this date.
-          If not specified, the last successful deployment start date will be used.
-          If not found, then the app will exit.
-
-          Example formats:
-          - 2023.01.01
-          - 2023.01.01:00.00.00
-          - 2023.01.01:23.59.59
-
-      --fail-fast <FAIL_FAST>
-          Fail fast mode
-
-          [possible values: true, false]
-
-  -d, --dry
-          Dry run mode, this will not apply changes to the database
-
-  -s, --show-report
-          Show report after running the plan
-
-  -h, --help
-          Print help (see a summary with '-h')
+leaf plans run --help
 ```
 
 - The `cutoff-date` parameter is used to specify the cutoff date for the plan. If not specified, the last successful deployment start date will be used. For example if the last deployment for `the plan` started at `2023.01.01:00.00.00` and you run `leaf plans run the-plan`
@@ -439,17 +326,10 @@ To rollback a plan, use the `plans rollback` command:
 
 ```bash
 ❯ leaf plans rollback --help
-Rollback a plan
-
-Usage: leaf plans rollback --plan <PLAN>
-
-Options:
-  -p, --plan <PLAN>
-  -h, --help         Print help
 ```
 
 > [!NOTE]
-> This will only rollback the last deployment for the given plan.
+> This will only rollback the last SUCCESSFUL deployment for the given plan.
 
 > [!TIP]
 > If your plan is stuck in `Running` status, you can use `leaf plans reset` command to reset the status to `Idle`.
@@ -460,18 +340,7 @@ Options:
 You can monitor the deployments using the `deployments` command:
 
 ```bash
-# ❯ leaf deployments --help
-Deployment commands
-
-Usage: leaf deployments <COMMAND>
-
-Commands:
-  list  List deployments
-  show
-  help  Print this message or the help of the given subcommand(s)
-
-Options:
-  -h, --help  Print help
+leaf deployments --help
 ```
 
 Use the `leaf deployments show --help` command to see the available options for the `show` command:
@@ -505,6 +374,106 @@ cargo test
 
 > [!TIP]
 > For manual tests you can generate source and target objects using the files under `scripts/sql` directory.
+
+
+### Hooks
+
+Hooks are the scripts that are defined in the `.env` file. You can use jinja templates in the hooks.
+Hooks are executed in given stub in the `.env` file variable. They are better can be explained with an example.
+
+Suppose you have the following hooks in the `.env` file:
+
+```bash
+# .env file
+
+# other variables
+...
+
+# Pre-prepare-deployment hooks
+LEAF__HOOKS__PRE_PREPARE_DEPLOYMENT="
+begin my_user.kill_processes('{{ plan }}'); end;
+begin my_user.lock_users(); end;
+"
+
+# other variables
+...
+
+```
+> [!NOTE]
+> Hooks are list of values which are delimited by new line like above and must be defined enclosed by double quotes.
+
+Given the above setup in .env file;
+- You will have two scripts that will be before the plan is prepared for deployment.
+- There scripts are:
+  - `begin my_user.kill_processes('{{ plan }}'); end;`
+  - `begin my_user.lock_users(); end;`
+- LEAF will execute these scripts in on the `target` database before the plan is prepared for deployment.
+
+Which means when you call;
+
+```bash
+leaf plans run demo3 ...
+# or
+leaf deployments prepare --plan demo3 ...
+```
+The scripts will be executed in the `target` database.
+
+> [!NOTE]
+> The reason why `run` calls the `prepare` hooks is because `run` command flow is like this:
+> 1. Call `prepare` command
+> 2. Call `apply` command
+
+Also notice that `begin my_user.kill_processes('{{ plan }}'); end;` has a variable `{{ plan }}` which will be replaced with the plan name
+during the execution of the script. This is provided during the execution time of the related command.
+
+
+## Examples
+
+```bash
+
+# Add a connection to use for source of the deployment
+leaf connections add --name=demo_source --username=system --password=Welcome1 --connection-string="localhost:1521/XEPDB1";
+
+# Add a connection to use for target of the deployment
+leaf connections add --name=demo_target --username=system --password=Welcome1 --connection-string="localhost:1522/XEPDB1";
+
+# Add a plan with source and target connections
+# This will only sync schemas SCHEMA3 and SCHEMA4 from source to target
+leaf plans add --name demo3 --source demo_source --target demo_target --schemas "SCHEMA3,SCHEMA4";
+
+# Run in dry-run mode and collect scripts that will be executed
+# This will output two scripts to `./deployment-scripts/output` directory
+# - Migration scripts
+# - Rollback scripts
+# This wont apply any changes to the target database
+# Also wont create any deployment plan in the repository
+leaf plans run demo3 --dry --collect-scripts --output-path ./.uncommitted/output --cutoff-date 2021.01.01
+
+
+# Run the plan
+# This will create a deployment plan in the repository and apply the changes to the target database immediately
+leaf plans run demo3 --cutoff-date 2021.01.01
+
+
+# Rollback the plan
+# This will rollback the last successful deployment for the plan
+leaf plans rollback --plan demo3
+
+
+# Prepare a deployment for the plan
+# This will create a deployment plan in the repository and prepare the changes to the target database.
+# This will NOT apply the changes to the target database.
+leaf deployments prepare --plan demo3 --cutoff-date 2021.01.01
+
+
+# List all deployments
+leaf deployments list
+
+# Apply the deployment
+# - Deployment ID is the ID of the deployment plan in the repository
+# - This will apply the changes to the target database for the given deployment ID
+leaf deployments apply --deployment-id 1
+```
 
 ### Release
 

@@ -4,7 +4,10 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct RulesConfig {
-    #[serde(default, deserialize_with = "deserialize_opt_vec_from_string")]
+    #[serde(
+        default = "default_exclude_object_types",
+        deserialize_with = "deserialize_opt_vec_from_string"
+    )]
     pub exclude_object_types: Option<Vec<String>>,
 
     #[serde(default, deserialize_with = "deserialize_opt_vec_from_string")]

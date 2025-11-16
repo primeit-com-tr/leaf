@@ -221,26 +221,16 @@ impl DeploymentService {
                     {
                         Ok(_) => {
                             // Success - update both statuses
-                            self.repo
-                                .set_status(deployment_id, DeploymentStatus::Success)
-                                .await?;
-                            self.plan_repo
-                                .set_status(plan_id, PlanStatus::Success)
-                                .await?;
                             ctx.progress("✅ Deployment completed successfully");
                             Ok(Some(deployment_id))
                         }
                         Err(e) => {
-                            let (count, errors) = e
+                            let (count, _) = e
                                 .downcast_ref::<DeployError>()
                                 .map(|DeployError::Errors(count, errors)| (*count, errors.clone()))
                                 .unwrap_or_else(|| (1, vec![e.to_string()]));
-
                             ctx.progress(format!("❌ Deployment failed with {} error(s)", count));
-                            self.plan_repo
-                                .set_status(plan_id, PlanStatus::Error)
-                                .await?;
-                            self.repo.set_error(deployment_id, &errors).await?;
+
                             Err(e)
                         }
                     }
@@ -270,7 +260,7 @@ impl DeploymentService {
         let source_client = self.get_client(plan.source_connection_id).await?;
         let target_client = self.get_client(plan.target_connection_id).await?;
 
-        plan.run_pre_prepare_hooks(disable_hooks, &source_client, ctx)
+        plan.run_pre_prepare_hooks(disable_hooks, &target_client, ctx)
             .await?;
 
         let plan_id = plan.id;
@@ -352,7 +342,7 @@ impl DeploymentService {
 
         self.plan_repo.set_status(plan_id, final_status).await?;
 
-        plan.run_post_prepare_hooks(disable_hooks, &source_client, ctx)
+        plan.run_post_prepare_hooks(disable_hooks, &target_client, ctx)
             .await?;
 
         result
@@ -379,7 +369,7 @@ impl DeploymentService {
         plan.run_pre_apply_hooks(disable_hooks, &client, ctx)
             .await?;
 
-        let result = async {
+        let result: Result<()> = async {
             ctx.progress(format!("Setting plan '{}' status to RUNNING...", plan.name));
             self.plan_repo
                 .set_status(plan_id, PlanStatus::Running)
@@ -493,6 +483,28 @@ impl DeploymentService {
 
         plan.run_post_apply_hooks(disable_hooks, &client, ctx)
             .await?;
+
+        match &result {
+            Ok(_) => {
+                self.repo
+                    .set_status(deployment_id, DeploymentStatus::Success)
+                    .await?;
+                self.plan_repo
+                    .set_status(plan_id, PlanStatus::Success)
+                    .await?;
+            }
+            Err(e) => {
+                let errors = e
+                    .downcast_ref::<DeployError>()
+                    .map(|DeployError::Errors(_, errors)| errors.clone())
+                    .unwrap_or_else(|| vec![e.to_string()]);
+
+                self.plan_repo
+                    .set_status(plan_id, PlanStatus::Error)
+                    .await?;
+                self.repo.set_error(deployment_id, &errors).await?;
+            }
+        };
 
         result
     }
@@ -631,7 +643,7 @@ impl DeploymentService {
             .set_status(deployment_id, DeploymentStatus::RollingBack)
             .await?;
 
-        let result: Result<()> = async {
+        let result: Result<(), anyhow::Error> = async {
             for (i, (rollback, change, changeset)) in rollbacks.iter().enumerate() {
                 progress.report(format!(
                     "Executing rollback {} of {} for '{} {}.{}'",

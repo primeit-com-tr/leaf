@@ -11,10 +11,10 @@ end;
 /
 
 CREATE USER schema3 IDENTIFIED BY schema1_password_tgt;
-GRANT CONNECT, RESOURCE, CREATE SEQUENCE, CREATE PROCEDURE, CREATE TRIGGER TO schema1;
+GRANT CONNECT, RESOURCE, CREATE SEQUENCE, CREATE PROCEDURE, CREATE TRIGGER, CREATE TABLE TO schema3;
 
 CREATE USER schema4 IDENTIFIED BY schema2_password_tgt;
-GRANT CONNECT, RESOURCE, CREATE SEQUENCE, CREATE PROCEDURE, CREATE TRIGGER TO schema2;
+GRANT CONNECT, RESOURCE, CREATE SEQUENCE, CREATE PROCEDURE, CREATE TRIGGER, CREATE TABLE TO schema4;
 
 -- === Tables (12) ===
 CREATE TABLE schema3.emp (id NUMBER PRIMARY KEY, name VARCHAR2(50)); -- Different column
@@ -59,25 +59,25 @@ SELECT action FROM schema4.audit_log WHERE log_id > 1000; -- New view
 
 -- === Types (4) ===
 CREATE OR REPLACE TYPE schema3.address_t AS OBJECT (
-    street VARCHAR2(100), -- Different size
-    city   VARCHAR2(100), -- Different size
-    zip    VARCHAR2(10)   -- Added element
-);
+                                                       street VARCHAR2(100), -- Different size
+                                                       city   VARCHAR2(100), -- Different size
+                                                       zip    VARCHAR2(10)   -- Added element
+                                                   );
 /
 CREATE OR REPLACE TYPE schema3.contact_info_t AS OBJECT ( -- New type
-    phone VARCHAR2(20),
-    fax   VARCHAR2(20)
-);
+                                                            phone VARCHAR2(20),
+                                                            fax   VARCHAR2(20)
+                                                        );
 /
 CREATE OR REPLACE TYPE schema4.department_t AS OBJECT (
-    dept_name VARCHAR2(50),
-    manager   VARCHAR2(50) -- Added element
-);
+                                                          dept_name VARCHAR2(50),
+                                                          manager   VARCHAR2(50) -- Added element
+                                                      );
 /
 CREATE OR REPLACE TYPE schema4.order_t AS OBJECT ( -- New type
-    order_id NUMBER,
-    order_date DATE
-);
+                                                     order_id NUMBER,
+                                                     order_date DATE
+                                                 );
 /
 
 -- === Procedures (4) ===
@@ -162,8 +162,8 @@ END salary_pkg;
 
 -- === Triggers (2) ===
 CREATE OR REPLACE TRIGGER schema3.trg_backup_emp
-AFTER UPDATE OR DELETE ON schema3.emp
-FOR EACH ROW
+    AFTER UPDATE OR DELETE ON schema3.emp
+    FOR EACH ROW
 BEGIN
     IF DELETING THEN
         INSERT INTO schema3.employees_backup (id, name) VALUES (:OLD.id, :OLD.name);
@@ -171,10 +171,31 @@ BEGIN
 END;
 /
 CREATE OR REPLACE TRIGGER schema4.trg_log_new_supplier
-AFTER INSERT ON schema4.suppliers
-FOR EACH ROW
+    AFTER INSERT ON schema4.suppliers
+    FOR EACH ROW
 BEGIN
     schema4.log_action('NEW SUPPLIER: ' || :NEW.supplier_id);
 END;
 /
 
+
+CREATE OR REPLACE PROCEDURE schema3.recreate_my_table(plan_name VARCHAR2) IS
+BEGIN
+    -- Try drop table, ignore any error
+    BEGIN
+        EXECUTE IMMEDIATE 'DROP TABLE schema3.my_table_'||plan_name||' PURGE';
+    EXCEPTION
+        WHEN OTHERS THEN
+            NULL; -- ignore drop errors
+    END;
+
+    -- Create table
+    EXECUTE IMMEDIATE '
+    CREATE TABLE schema3.my_table_' || plan_name|| ' (
+                                      id        NUMBER PRIMARY KEY,
+                                      name      VARCHAR2(100),
+                                      created_at DATE DEFAULT SYSDATE
+    )
+    ';
+END;
+/

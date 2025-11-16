@@ -67,17 +67,49 @@ pub enum DeploymentCommands {
     /// Show a deployment
     Show(ShowCommand),
 
-    /// Prepare a deployment
+    /// Prepare a deployment,
+    #[command(
+        long_about = r#"
+This will create a deployment and related change scripts in the repository,
+but not apply them. You can use `leaf deployments apply` to apply the changes.
+
+This is useful when you want to prepare a deployment for a plan but you don't
+want to apply the changes immediately and want to see the changes first.
+"#,
+        after_help = r#"
+EXAMPLES:
+    # leaf deployments prepare --plan demo3 --cutoff-date 2021.01.01
+    This will prepare a deployment for the plan `demo3` with the cutoff date
+    `2021.01.01`. If the plan is not runnable, the app will exit.
+
+    You should see the following output:
+    ✅ Deployment prepared for plan 'demo3' completed successfully
+    🗝️ Deployment ID: 1
+    ✅ Deployment preparation for plan 'demo3' completed successfully.
+
+    And when you run `leaf deployments list`, you will see something like the following output:
+    === Deployments ===
+    ╭───┬────┬───────┬─────────────┬─────────────┬─────────────────────┬─────────┬─────────┬─────────┬────────────┬──────────┬────────╮
+    │ # │ ID │ Plan  │ Source      │ Target      │ Cutoff Date         │ Schemas │ Objects │ Changes │ Started At │ Duration │ Status │
+    ├───┼────┼───────┼─────────────┼─────────────┼─────────────────────┼─────────┼─────────┼─────────┼────────────┼──────────┼────────┤
+    │ 1 │ 1  │ demo3 │ demo_source │ demo_target │ 2021-01-01T00:00:00 │ 2       │ 36      │ 36      │ N/A        │ 0.000s   │ IDLE   │
+    ╰───┴────┴───────┴─────────────┴─────────────┴─────────────────────┴─────────┴─────────┴─────────┴────────────┴──────────┴────────╯
+"#
+    )]
     Prepare {
         #[arg(long, required = true)]
         plan: String,
 
+        /// Cutoff date for the deployment. if not specified, the last successful deployment date will be used.
+        /// This is only useful when you first time run a deployment for the plan. Otherwise you should skip this argument.
         #[arg(long, required = false, value_parser = parse_cutoff_date)]
         cutoff_date: Option<NaiveDateTime>,
 
+        /// Dry run mode, will not create repository objects, will just simulate the deployment preparation.
         #[arg(long, required = false)]
         dry: bool,
 
+        /// Collect migration scripts and rollback scripts
         #[arg(long, required = false)]
         collect_scripts: bool,
 
@@ -90,6 +122,22 @@ pub enum DeploymentCommands {
     },
 
     /// Applies a prepared deployment.
+    #[command(
+        long_about = r#"
+This will apply the deployment with given id to target database.
+The deployment status should be `IDLE` to apply it. Otherwise the app will exit.
+"#,
+        after_help = r#"
+EXAMPLES:
+    #  leaf deployments apply --deployment-id 1 --disable-hooks=true
+    This will apply the deployment with given id to target database.
+    Also during the apply process, the hooks will be disabled which means it will override the value you provided during the
+    plan creation.
+
+    Example output:
+    🚀 Deployment for plan 'demo3' completed successfully.
+    "#
+    )]
     Apply {
         /// Deployment ID to apply
         #[arg(long, required = true)]
@@ -661,7 +709,11 @@ async fn prepare_deployment(
     spinner.finish_and_clear();
 
     if res.is_err() {
-        eprintln!("❌ Deployment for plan '{}' failed", plan_name);
+        eprintln!(
+            "❌ Deployment for plan '{}' failed with error: {}",
+            plan_name,
+            res.err().unwrap()
+        );
         std::process::exit(1);
     }
     match res.unwrap() {

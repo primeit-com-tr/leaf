@@ -19,11 +19,15 @@ pub struct Context<'a> {
     name = "leaf",
     about = "Leaf CLI application",
     long_about = format!(
-r#"{} - {}
-by {} - {}"#,
+r#"
+{} - {}
+by {} - {}
+Github: {}
+"#,
 "LEAF".green().bold(),
 "Simple and powerful database deployment tool.",
-"primeit".blue(), "https://primeit.com.tr".on_bright_black()
+"PrimeIT".blue(), "https://primeit.com.tr".on_bright_black(),
+"https://github.com/primeit-com-tr/leaf".green()
 ))]
 pub struct Cli {
     #[command(subcommand)]

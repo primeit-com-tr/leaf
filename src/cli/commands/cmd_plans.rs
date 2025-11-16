@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use chrono::NaiveDateTime;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
@@ -15,12 +17,18 @@ use crate::{
     types::{Hooks, PlanStatus},
     utils::{
         DeploymentContext, ProgressReporter, deployment_context::DeploymentContextOptions,
-        parsers::parse_cutoff_date,
+        parsers::parse_cutoff_date, validate_dir,
     },
 };
 use tabled::{settings::Alignment, settings::Modify, settings::Style, settings::object::Rows};
 
 #[derive(Parser, Debug, Clone)]
+#[clap(after_help = r#"
+EXAMPLES:
+    # leaf plans run demo3 --dry --collect-scripts --output-path ./.uncommitted/output --cutoff-date 2021.01.01
+    This will run the plan `demo3` with dry-run mode (no changes will be applied), collect scripts, and output scripts to `./.uncommitted/output`.
+    The deployment will start from the last successful deployment date (2021.01.01) or the app will exit.
+    "#)]
 pub struct PlansRunArgs {
     /// Plan name, case insensitive
     #[arg(required = true)]
@@ -44,23 +52,44 @@ pub struct PlansRunArgs {
     #[arg(long)]
     dry: bool,
 
-    /// Show report after running the plan
+    /// Collect migration scripts and rollback scripts
+    #[arg(long)]
+    collect_scripts: bool,
+
+    /// Scripts output directory
+    /// This is only valid when --collect-scripts is set
+    #[arg(long, value_name = "DIR", value_parser = validate_dir)]
+    output_path: Option<PathBuf>,
+
+    /// Show report after running the plan (!not fully implemented yet)
     #[arg(long, default_value_t = false)]
     show_report: bool,
 
+    /// Disable hooks, no hooks will be executed when this flag is provided
     #[arg( long, default_value = None)]
     disable_hooks: Option<bool>,
+}
+
+impl PlansRunArgs {
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.collect_scripts && self.output_path.is_some() {
+            return Err("--collect-scripts is required when --scripts-dir is specified".into());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Subcommand, Debug)]
 pub enum ListSubcommand {
     /// List all plans (default)
     All,
+
     /// List schemas
     Schemas {
         #[arg(long, short, required = true)]
         plan: String,
     },
+
     /// List excluded object types for a plan
     ExcludedObjectTypes {
         #[arg(long, short, required = true)]
@@ -89,6 +118,28 @@ pub struct ListCommand {
 #[derive(Subcommand, Debug)]
 pub enum PlanCommands {
     /// Add a plan
+    #[clap(after_help = r#"
+EXAMPLES:
+
+    # leaf plans add --name my-plan --source source-conn --target target --schemas SCHEMA1,SCHEMA2 --fail-fast
+    This will create a plan named `my-plan` with source connection `source-conn` and target connection `target`.
+    It will include schemas `SCHEMA1` and `SCHEMA2` in the plan.
+    It will fail fast mode which means if any change fails, deployment will stop and return an error.
+
+    # leaf plans add \
+        --name my-plan \
+        --source source-conn \
+        --target target \
+        --exclude-object-types TABLE,VIEW \
+        --exclude-object-names TABLE1,TABLE2 \
+        --disable-all-drops
+    This will create a plan named `my-plan` with source connection `source-conn` and target connection `target`.
+    It will exclude tables `TABLE1` and `TABLE2` from the plan.
+    It will also exclude views `VIEW` type objects from the plan.
+    It will disable all DROP operations. This means if you run the plan, it will not drop any objects.
+    If --disable-all-drops is not specified, it will use the value from the `.env` file which is `true` by default.
+    To enable all DROP operations, set the value to `false` like this --disable-all-drops=false
+    "#)]
     Add {
         /// Name of the plan
         #[arg(long, required = true)]
@@ -132,6 +183,20 @@ pub enum PlanCommands {
         disable_hooks: bool,
     },
     /// List plans, schemas, excluded object types
+    #[clap(after_help = r#"
+EXAMPLES:
+    # leaf plans list
+    This will list all available plans.
+
+    # leaf plans list schemas --plan demo1
+    This will list all schemas for the plan `demo1`.
+
+    # leaf plans list excluded-object-types --plan demo1
+    This will list all excluded object types for the plan `demo1`. Objects with these types will not be deployed.
+
+    # leaf plans list excluded-object-names --plan demo1
+    This will list all excluded object names for the plan `demo1`. Objects with these names will not be deployed.
+    "#)]
     List(ListCommand),
 
     /// Remove a plan
@@ -148,10 +213,10 @@ pub enum PlanCommands {
 
     /// Reset plan status to IDLE
     Reset {
-        #[arg(long, short, required = true)]
+        #[arg(required = true)]
         plan: String,
 
-        #[arg(long, short, required = false)]
+        #[arg(long, required = false)]
         yes: bool,
     },
 
@@ -160,9 +225,11 @@ pub enum PlanCommands {
 
     /// Rollback a plan
     Rollback {
-        #[arg(long, short, required = true)]
+        /// Plan name, case insensitive
+        #[arg(required = true)]
         plan: String,
 
+        /// Disable hooks during the rollback process
         #[arg(long, short, required = false)]
         disable_hooks: Option<bool>,
     },
@@ -184,6 +251,12 @@ struct PlanRow {
 
     #[tabled(rename = "Schemas")]
     schema_count: String,
+
+    #[tabled(rename = "Drops Disabled")]
+    is_drops_disabled: String,
+
+    #[tabled(rename = "Hooks Disabled")]
+    is_hooks_disabled: String,
 
     #[tabled(rename = "Status")]
     status: String,
@@ -237,6 +310,7 @@ pub async fn execute(action: &PlanCommands, ctx: &Context<'_>) {
         PlanCommands::Remove { name } => remove(name, ctx).await,
         PlanCommands::Prune { yes } => prune(yes, ctx).await,
         PlanCommands::Run(args) => {
+            args.validate().exit_on_err("Failed to validate arguments");
             run(
                 &args.name,
                 &args.dry,
@@ -244,6 +318,8 @@ pub async fn execute(action: &PlanCommands, ctx: &Context<'_>) {
                 args.fail_fast,
                 args.disable_hooks,
                 args.show_report,
+                args.collect_scripts,
+                args.output_path.clone(),
                 ctx,
             )
             .await
@@ -269,6 +345,21 @@ pub async fn add(
     disable_hooks: bool,
     ctx: &Context<'_>,
 ) {
+    let combined_exclude_object_types = ctx
+        .settings
+        .rules
+        .combined_exclude_object_types(Some(exclude_object_types.to_vec()));
+
+    let combined_exclude_object_names = ctx
+        .settings
+        .rules
+        .combined_exclude_object_names(Some(exclude_object_names.to_vec()));
+
+    let combined_disabled_drop_types = ctx
+        .settings
+        .rules
+        .combined_disabled_drop_types(Some(excluded_drop_types.to_vec()));
+
     ctx.services
         .plan_service
         .create(
@@ -276,9 +367,9 @@ pub async fn add(
             source,
             target,
             schemas,
-            Some(exclude_object_types.to_vec()),
-            Some(exclude_object_names.to_vec()),
-            Some(excluded_drop_types.to_vec()),
+            combined_exclude_object_types,
+            combined_exclude_object_names,
+            combined_disabled_drop_types,
             disable_all_drops.unwrap_or(ctx.settings.rules.disable_all_drops),
             fail_fast,
             disable_hooks,
@@ -334,10 +425,21 @@ pub async fn list_plans(ctx: &Context<'_>) {
             source: source_connection.name.blue().to_string(),
             target: target_connection.name.purple().to_string(),
             schema_count: plan.schemas.0.len().to_string().cyan().to_string(),
+            is_drops_disabled: if plan.disable_all_drops {
+                "YES".green().to_string()
+            } else {
+                "NO".red().to_string()
+            },
+            is_hooks_disabled: if plan.disable_hooks {
+                "YES".to_string()
+            } else {
+                "NO".to_string()
+            },
             status: plan.status.to_colored_string(),
         });
     }
 
+    table_data.sort_by(|a, b| a.name.cmp(&b.name));
     let table = Table::new(table_data)
         .with(Style::rounded())
         .with(Modify::new(Rows::new(1..)).with(Alignment::left()))
@@ -360,7 +462,7 @@ pub async fn list_plan_field(plan_name: &str, field: &str, ctx: &Context<'_>) {
     }
     let plan = plan.unwrap();
 
-    let field_value: Vec<String> = match field {
+    let field_values: Vec<String> = match field {
         "schemas" => plan.schemas.0,
         "excluded_object_types" => plan.exclude_object_types.map_or_else(Vec::new, |sl| sl.0),
         "excluded_object_names" => plan.exclude_object_names.map_or_else(Vec::new, |sl| sl.0),
@@ -371,7 +473,7 @@ pub async fn list_plan_field(plan_name: &str, field: &str, ctx: &Context<'_>) {
         }
     };
 
-    if field_value.is_empty() {
+    if field_values.is_empty() {
         println!("✅ No {} found for plan '{}'", field, plan_name);
         return;
     }
@@ -379,7 +481,7 @@ pub async fn list_plan_field(plan_name: &str, field: &str, ctx: &Context<'_>) {
     let mut builder = Builder::default();
     builder.push_record(vec![field]);
 
-    for value in &field_value {
+    for value in &field_values {
         builder.push_record(vec![value]);
     }
 
@@ -432,6 +534,8 @@ pub async fn run(
     fail_fast: Option<bool>,
     disable_hooks: Option<bool>,
     show_report: bool,
+    collect_scripts: bool,
+    output_path: Option<PathBuf>,
     ctx: &Context<'_>,
 ) {
     let (spinner, tx) = new_spinner();
@@ -451,12 +555,12 @@ pub async fn run(
 
     let mut dctx = DeploymentContext::new(Some(DeploymentContextOptions::new(
         *dry,
-        false,
-        None,
+        collect_scripts,
+        output_path,
         None,
         Some(tx),
     )))
-    .exit_on_err("Failed to initialize deployment sink"); // TODO: Add more info
+    .exit_on_err("Failed to initialize deployment context"); // TODO: Add more info
 
     let res = ctx
         .services
