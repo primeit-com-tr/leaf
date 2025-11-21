@@ -7,16 +7,28 @@ use leaf::{
 
 #[tokio::main]
 async fn main() {
-    let settings = Settings::new().expect("Failed to load configuration");
-    let cli = Cli::parse_args();
+    // Initialize basic logging FIRST, before anything can fail
+    let settings = match Settings::new() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to load configuration: {}", e);
+            eprintln!("Error details: {:?}", e);
+            std::process::exit(1);
+        }
+    };
 
     utils::logger::init_logging(&settings.logs);
 
+    let cli = Cli::parse_args();
+
     if !cli.should_run_main() {
-        // Execute CLI command and exit
-        let app_services = AppServices::new(&settings)
-            .await
-            .expect("Failed to initialize services");
+        let app_services = match AppServices::new(&settings).await {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Failed to initialize services: {}", e);
+                std::process::exit(1);
+            }
+        };
 
         cli.execute(&Context {
             settings: &settings,
