@@ -46,13 +46,13 @@ jobs:
         if: matrix.target == 'x86_64-unknown-linux-musl'
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools musl-dev perl make
+          sudo apt-get install -y musl-tools musl-dev linux-headers-generic perl make
 
           # Build static OpenSSL for musl
           wget https://www.openssl.org/source/openssl-1.1.1w.tar.gz
           tar -xzf openssl-1.1.1w.tar.gz
           cd openssl-1.1.1w
-          CC=musl-gcc ./Configure no-shared no-async --prefix=$HOME/musl-openssl --openssldir=$HOME/musl-openssl/ssl linux-x86_64
+          CC=musl-gcc ./Configure no-shared no-async no-secure-memory --prefix=$HOME/musl-openssl --openssldir=$HOME/musl-openssl/ssl linux-x86_64
           make -j$(nproc)
           make install
           cd ..
