@@ -42,25 +42,27 @@ jobs:
           target: ${{ matrix.target }}
           override: true
 
-      - name: Install musl tools and dependencies
+      - name: Install musl tools and build OpenSSL
         if: matrix.target == 'x86_64-unknown-linux-musl'
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools musl-dev
-          # Install openssl for musl
+          sudo apt-get install -y musl-tools musl-dev perl make
+
+          # Build static OpenSSL for musl
           wget https://www.openssl.org/source/openssl-1.1.1w.tar.gz
           tar -xzf openssl-1.1.1w.tar.gz
           cd openssl-1.1.1w
-          CC=musl-gcc ./Configure no-shared no-async --prefix=/musl --openssldir=/musl/ssl linux-x86_64
-          make depend
-          sudo make install
+          CC=musl-gcc ./Configure no-shared no-async --prefix=$HOME/musl-openssl --openssldir=$HOME/musl-openssl/ssl linux-x86_64
+          make -j$(nproc)
+          make install
           cd ..
+
+          # Set env var for subsequent steps
+          echo "OPENSSL_DIR=$HOME/musl-openssl" >> $GITHUB_ENV
+          echo "OPENSSL_STATIC=1" >> $GITHUB_ENV
 
       - name: Build release
         run: cargo build --release --target ${{ matrix.target }}
-        env:
-          OPENSSL_DIR: ${{ matrix.target == 'x86_64-unknown-linux-musl' && '/musl' || '' }}
-          OPENSSL_STATIC: ${{ matrix.target == 'x86_64-unknown-linux-musl' && '1' || '' }}
 
       - name: Prepare binary
         shell: bash
