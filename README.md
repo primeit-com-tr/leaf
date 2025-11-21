@@ -42,6 +42,10 @@ Simple and powerful database deployment tool for `Oracle` Database.
 # Linux
 curl -L https://github.com/primeit-com-tr/leaf/releases/latest/download/leaf-linux-x86_64 -o leaf
 
+ # Linux with musl in case of compatibility issues
+curl -L https://github.com/primeit-com-tr/leaf/releases/latest/download/leaf-linux-x86_64-musl -o leaf
+
+
 # macOS
 curl -L https://github.com/primeit-com-tr/leaf/releases/latest/download/leaf-macos-x86_64 -o leaf
 
