@@ -42,14 +42,25 @@ jobs:
           target: ${{ matrix.target }}
           override: true
 
-      - name: Install musl tools
+      - name: Install musl tools and dependencies
         if: matrix.target == 'x86_64-unknown-linux-musl'
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools
+          sudo apt-get install -y musl-tools musl-dev
+          # Install openssl for musl
+          wget https://www.openssl.org/source/openssl-1.1.1w.tar.gz
+          tar -xzf openssl-1.1.1w.tar.gz
+          cd openssl-1.1.1w
+          CC=musl-gcc ./Configure no-shared no-async --prefix=/musl --openssldir=/musl/ssl linux-x86_64
+          make depend
+          sudo make install
+          cd ..
 
       - name: Build release
         run: cargo build --release --target ${{ matrix.target }}
+        env:
+          OPENSSL_DIR: ${{ matrix.target == 'x86_64-unknown-linux-musl' && '/musl' || '' }}
+          OPENSSL_STATIC: ${{ matrix.target == 'x86_64-unknown-linux-musl' && '1' || '' }}
 
       - name: Prepare binary
         shell: bash
