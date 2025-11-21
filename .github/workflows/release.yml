@@ -48,11 +48,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y musl-tools musl-dev
 
-          # Use pre-built musl-compatible OpenSSL
+          # Build OpenSSL for musl
           wget https://github.com/openssl/openssl/archive/refs/tags/OpenSSL_1_1_1w.tar.gz
           tar -xzf OpenSSL_1_1_1w.tar.gz
           cd openssl-OpenSSL_1_1_1w
-          CC=musl-gcc ./Configure no-shared no-async --prefix=$HOME/musl-openssl --openssldir=$HOME/musl-openssl/ssl linux-x86_64 -DOPENSSL_NO_SECURE_MEMORY
+          CC=musl-gcc ./Configure no-shared no-async no-afalgeng --prefix=$HOME/musl-openssl --openssldir=$HOME/musl-openssl/ssl linux-x86_64 -DOPENSSL_NO_SECURE_MEMORY
           make depend
           make -j$(nproc)
           make install
