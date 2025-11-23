@@ -1,6 +1,6 @@
 mod commands;
 
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use colored::Colorize;
 
 use crate::cli::commands::{
@@ -51,7 +51,8 @@ impl Cli {
             Some(Commands::Init { action }) => cmd_init::execute(action.as_ref(), ctx).await,
             Some(Commands::Version(action)) => cmd_version::execute(action, ctx.settings).await,
             None => {
-                // No command means start server - handled in main
+                let mut cmd = Self::command();
+                cmd.print_help().expect("Failed to print help");
             }
         }
     }
