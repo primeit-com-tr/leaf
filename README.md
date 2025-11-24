@@ -81,7 +81,11 @@ Check the `target/release` directory for the binary.
 
 ## Usage
 
-Before you start, make sure you have [oracle-instant-client](https://www.oracle.com/database/technologies/instant-client/downloads.html) installed.
+Before you start, make sure you have [oracle-instant-client](https://www.oracle.com/database/technologies/instant-client/downloads.html) installed and on your `LD_LIBRARY_PATH`.
+
+```bash
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/path/to/instantclient_21_8
+```
 
 ### Getting Started
 
