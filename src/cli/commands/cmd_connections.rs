@@ -132,7 +132,7 @@ pub async fn prune(yes: &bool, ctx: &Context<'_>) {
             .unwrap_or(false);
 
     if !proceed {
-        println!("✅ Aborted");
+        println!("✅ Aborted");p
         return;
     }
 
