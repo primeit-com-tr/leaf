@@ -109,7 +109,7 @@ pub async fn add(
         .connection_service
         .create(name, username, password, connection_string)
         .await
-        .exit_on_err(&format!("❌ Connection creation failed for '{}'", name));
+        .exit_on_err(&format!("Connection creation failed for '{}'", name));
 
     println!("✅ Connection created successfully for '{}'", name);
 }
@@ -119,7 +119,7 @@ pub async fn remove(name: &str, ctx: &Context<'_>) {
         .connection_service
         .delete_by_name(&name)
         .await
-        .exit_on_err(&format!("❌ Failed to delete connection '{}'", name));
+        .exit_on_err(&format!("Failed to delete connection '{}'", name));
 
     println!("✅ Connection '{}' deleted", name);
 }
@@ -141,7 +141,7 @@ pub async fn prune(yes: &bool, ctx: &Context<'_>) {
         .connection_service
         .prune()
         .await
-        .exit_on_err("❌ Failed to delete all connections");
+        .exit_on_err("Failed to delete all connections");
 
     if count == 0 {
         println!("✅ No connections to delete");
@@ -198,17 +198,21 @@ pub async fn ping(name: &str, ctx: &Context<'_>) {
 
     spinner.finish_and_clear();
 
-    result.exit_on_err(&format!("❌ Connection test failed for '{}'", name));
-
-    println!("✅ Connection test passed for '{}'", name);
+    match result {
+        Ok(_) => println!("✅ Connection test passed for '{}'", name),
+        Err(e) => eprintln!("❌ Connection test failed for '{}': {:?}", name, e),
+    }
 }
 
 pub async fn test(username: &str, password: &str, connection_string: &str, ctx: &Context<'_>) {
-    ctx.services
+    let result = ctx
+        .services
         .connection_service
         .test(&username, &password, &connection_string)
-        .await
-        .exit_on_err(&format!("❌ Connection test failed for '{}'", username));
+        .await;
 
-    println!("✅ Connection test passed for '{}'", username);
+    match result {
+        Ok(_) => println!("✅ Connection test passed for '{}'", username),
+        Err(e) => println!("❌ Connection test failed for '{}': {:?}", username, e),
+    }
 }

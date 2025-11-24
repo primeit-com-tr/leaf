@@ -434,6 +434,10 @@ during the execution of the script. This is provided during the execution time o
 
 ```bash
 
+
+# Test connection params
+leaf connections test --username=system --password=Welcome1 --connection-string="localhost:1521/XEPDB1"
+
 # Add a connection to use for source of the deployment
 leaf connections add --name=demo_source --username=system --password=Welcome1 --connection-string="localhost:1521/XEPDB1";
 

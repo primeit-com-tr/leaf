@@ -97,7 +97,10 @@ impl ConnectionService {
         let client = OracleClient::connect(username, password, connection_string)
             .context("Failed to connect to Oracle database")?;
 
-        _ = client.conn.query_row("select 1 from dual", &[])?;
+        client
+            .conn
+            .query_row("select 1 from dual", &[])
+            .context("Failed to execute test query on Oracle database")?;
         Ok(())
     }
 }
