@@ -38,25 +38,6 @@ jobs:
           target: ${{ matrix.target }}
           override: true
 
-      - name: Install musl tools and build OpenSSL
-        if: matrix.target == 'x86_64-unknown-linux-musl'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y musl-tools musl-dev
-
-          # Build OpenSSL for musl
-          wget https://github.com/openssl/openssl/archive/refs/tags/OpenSSL_1_1_1w.tar.gz
-          tar -xzf OpenSSL_1_1_1w.tar.gz
-          cd openssl-OpenSSL_1_1_1w
-          CC=musl-gcc ./Configure no-shared no-async no-afalgeng --prefix=$HOME/musl-openssl --openssldir=$HOME/musl-openssl/ssl linux-x86_64 -DOPENSSL_NO_SECURE_MEMORY
-          make depend
-          make -j$(nproc)
-          make install
-          cd ..
-
-          echo "OPENSSL_DIR=$HOME/musl-openssl" >> $GITHUB_ENV
-          echo "OPENSSL_STATIC=1" >> $GITHUB_ENV
-
       - name: Build release
         run: cargo build --release --target ${{ matrix.target }}
 
