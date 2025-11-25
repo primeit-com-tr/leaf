@@ -57,8 +57,40 @@ jobs:
           name: ${{ matrix.asset_name }}
           path: ${{ matrix.asset_name }}
 
+  build-oracle-linux:
+    runs-on: ubuntu-latest
+    container:
+      image: oraclelinux:7
+    steps:
+      - name: Install dependencies
+        run: |
+          yum install -y gcc gcc-c++ make curl
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Build release
+        run: |
+          source $HOME/.cargo/env
+          cargo build --release --target x86_64-unknown-linux-gnu
+
+      - name: Prepare binary
+        run: |
+          cp target/x86_64-unknown-linux-gnu/release/leaf leaf-oracle-linux-7-x86_64
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: leaf-oracle-linux-7-x86_64
+          path: leaf-oracle-linux-7-x86_64
+
   release:
-    needs: build
+    needs: [build, build-oracle-linux]
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
