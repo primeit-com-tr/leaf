@@ -66,7 +66,7 @@ jobs:
       - name: Build in Oracle Linux 7 container
         run: |
           docker run --rm -v $PWD:/workspace -w /workspace oraclelinux:7 bash -c "
-            yum install -y gcc gcc-c++ make curl && \
+            yum install -y gcc gcc-c++ make curl openssl-devel pkg-config perl-core && \
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
             source \$HOME/.cargo/env && \
             cargo build --release --target x86_64-unknown-linux-gnu && \
