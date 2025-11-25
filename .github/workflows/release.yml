@@ -64,14 +64,17 @@ jobs:
     steps:
       - name: Install dependencies
         run: |
-          yum install -y gcc gcc-c++ make curl
+          yum install -y gcc gcc-c++ make curl git
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        run: |
+          git clone https://github.com/${{ github.repository }} .
+          git checkout ${{ github.ref_name }}
 
       - name: Install Rust
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          source $HOME/.cargo/env
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Build release
@@ -84,7 +87,12 @@ jobs:
           cp target/x86_64-unknown-linux-gnu/release/leaf leaf-oracle-linux-7-x86_64
 
       - name: Upload binary
-        uses: actions/upload-artifact@v4
+        run: |
+          mkdir -p release-assets/leaf-oracle-linux-7-x86_64
+          cp leaf-oracle-linux-7-x86_64 release-assets/leaf-oracle-linux-7-x86_64/
+
+      - name: Save artifact
+        uses: actions/upload-artifact@v3
         with:
           name: leaf-oracle-linux-7-x86_64
           path: leaf-oracle-linux-7-x86_64
