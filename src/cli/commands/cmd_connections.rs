@@ -105,23 +105,23 @@ pub async fn add(
     password: &str,
     connection_string: &str,
 ) {
-    ctx.services
+    let result = ctx
+        .services
         .connection_service
         .create(name, username, password, connection_string)
-        .await
-        .exit_on_err(&format!("Connection creation failed for '{}'", name));
-
-    println!("✅ Connection created successfully for '{}'", name);
+        .await;
+    match result {
+        Ok(_) => println!("✅ Connection created successfully for '{}'", name),
+        Err(e) => eprintln!("❌ Connection creation failed for '{}': {:?}", name, e),
+    }
 }
 
 pub async fn remove(name: &str, ctx: &Context<'_>) {
-    ctx.services
-        .connection_service
-        .delete_by_name(&name)
-        .await
-        .exit_on_err(&format!("Failed to delete connection '{}'", name));
-
-    println!("✅ Connection '{}' deleted", name);
+    let result = ctx.services.connection_service.delete_by_name(&name).await;
+    match result {
+        Ok(_) => println!("✅ Connection '{}' deleted", name),
+        Err(e) => eprintln!("❌ Failed to delete connection '{}': {:?}", name, e),
+    }
 }
 
 pub async fn prune(yes: &bool, ctx: &Context<'_>) {
@@ -136,12 +136,15 @@ pub async fn prune(yes: &bool, ctx: &Context<'_>) {
         return;
     }
 
-    let count = ctx
-        .services
-        .connection_service
-        .prune()
-        .await
-        .exit_on_err("Failed to delete all connections");
+    let result = ctx.services.connection_service.get_all().await;
+
+    let count = match result {
+        Ok(connections) => connections.len(),
+        Err(e) => {
+            eprintln!("❌ Failed to list connections: {:?}", e);
+            std::process::exit(1);
+        }
+    };
 
     if count == 0 {
         println!("✅ No connections to delete");
@@ -151,12 +154,15 @@ pub async fn prune(yes: &bool, ctx: &Context<'_>) {
 }
 
 pub async fn list(ctx: &Context<'_>) {
-    let connections = ctx
-        .services
-        .connection_service
-        .get_all()
-        .await
-        .exit_on_err("Failed to list connections");
+    let result = ctx.services.connection_service.get_all().await;
+
+    let connections = match result {
+        Ok(connections) => connections,
+        Err(e) => {
+            eprintln!("❌ Failed to list connections: {:?}", e);
+            std::process::exit(1);
+        }
+    };
 
     println!("{}", "=== Connections ===".blue());
 

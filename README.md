@@ -435,6 +435,9 @@ during the execution of the script. This is provided during the execution time o
 
 ```bash
 
+# Initialize the application
+# make sure you don't have existing leaf.db (sqlite) file in the current directory
+leaf init
 
 # Test connection params
 leaf connections test --username=system --password=Welcome1 --connection-string="localhost:1521/XEPDB1"
