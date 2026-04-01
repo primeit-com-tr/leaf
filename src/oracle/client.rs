@@ -115,6 +115,8 @@ impl OracleClient {
             get_query("objects.sql.jinja", &ctx).context("Failed to render DDL query template")?;
         debug!("Query: {}", query);
 
+        println!("Query: {}", query);
+
         let rows = self.conn.query(query.as_str(), &[])?;
         let mut objects = Vec::new();
         for row_result in rows {
