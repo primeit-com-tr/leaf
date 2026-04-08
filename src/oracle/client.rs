@@ -108,14 +108,13 @@ impl OracleClient {
             &format_sql_list(exclude_object_names.unwrap_or(vec![])),
         );
         if let Some(cutoff_date) = cutoff_date {
-            ctx.insert("cutoff_date", &cutoff_date.format("%Y%m%d").to_string());
+            ctx.insert("cutoff_date", &cutoff_date.format("%Y.%m.%d").to_string());
         }
 
         let query =
             get_query("objects.sql.jinja", &ctx).context("Failed to render DDL query template")?;
-        debug!("Query: {}", query);
 
-        println!("Query: {}", query);
+        debug!("Query: {}", query);
 
         let rows = self.conn.query(query.as_str(), &[])?;
         let mut objects = Vec::new();

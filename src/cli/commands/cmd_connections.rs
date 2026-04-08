@@ -1,4 +1,4 @@
-use crate::cli::{Context, commands::ExitOnErr};
+use crate::cli::{ Context};
 use clap::Subcommand;
 use colored::*;
 use indicatif::{ProgressBar, ProgressStyle};
